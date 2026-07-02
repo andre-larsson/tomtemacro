@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use global_hotkey::hotkey::{Code, HotKey};
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
-use tomtemacro_core::clicker::{ClickKind, ClickPosition, ClickerConfig};
+use tomtemacro_core::clicker::{ClickKind, ClickPosition, ClickTarget, ClickerConfig};
 use tomtemacro_core::engine::{EngineHandle, Mode};
 use tomtemacro_core::inject::{EnigoInjector, InjectError, Injector};
 use tomtemacro_core::model::{EventKind, Key, MouseButton};
@@ -57,7 +57,7 @@ fn injected_f6_toggles_clicker_via_global_hotkey() {
     let engine = EngineHandle::spawn_with(|| Ok(NullInjector), None);
     let config = ClickerConfig {
         interval: Duration::from_millis(50),
-        button: MouseButton::Left,
+        target: ClickTarget::Button(MouseButton::Left),
         click_kind: ClickKind::Single,
         position: ClickPosition::FollowCursor,
         jitter: None,

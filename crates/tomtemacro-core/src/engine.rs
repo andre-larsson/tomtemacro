@@ -410,7 +410,7 @@ fn drain_stale_starts(commands: &Receiver<Command>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::clicker::{ClickKind, ClickPosition};
+    use crate::clicker::{ClickKind, ClickPosition, ClickTarget};
     use crate::model::{EventKind, MouseButton};
     use std::time::Duration;
 
@@ -428,7 +428,7 @@ mod tests {
     fn config(limit: Option<u64>) -> ClickerConfig {
         ClickerConfig {
             interval: Duration::from_millis(5),
-            button: MouseButton::Left,
+            target: ClickTarget::Button(MouseButton::Left),
             click_kind: ClickKind::Single,
             position: ClickPosition::FollowCursor,
             jitter: None,

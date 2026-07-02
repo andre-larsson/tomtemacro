@@ -9,9 +9,10 @@ clicking and typing so you don't have to.
 
 ## Features
 
-- **Auto-clicker** — configurable interval (ms precision), mouse button,
-  single/double click, fixed position or follow-cursor, optional humanized
-  jitter (interval variance + position offset), optional click-count limit.
+- **Auto-clicker / auto-presser** — configurable interval (ms precision),
+  mouse button or keyboard key, single/double click, fixed position or
+  follow-cursor, optional humanized jitter (interval variance + position
+  offset), optional click-count limit.
 - **Macro recorder** — record global mouse & keyboard input with original
   timing, replay at any speed, loop N times or forever.
 - **Macro library** — macros saved as human-readable, hand-editable

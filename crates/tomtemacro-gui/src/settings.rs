@@ -4,6 +4,8 @@
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+use tomtemacro_core::clicker::ClickTarget;
+use tomtemacro_core::model::MouseButton;
 
 pub const SETTINGS_VERSION: u32 = 1;
 
@@ -30,7 +32,7 @@ pub struct HotkeySettings {
 #[serde(default)]
 pub struct ClickerSettings {
     pub interval_ms: u64,
-    pub button: tomtemacro_core::model::MouseButton,
+    pub target: ClickTarget,
     pub double: bool,
     pub jitter_enabled: bool,
     pub jitter_frac: f32,
@@ -73,7 +75,7 @@ impl Default for ClickerSettings {
     fn default() -> Self {
         Self {
             interval_ms: 100,
-            button: tomtemacro_core::model::MouseButton::Left,
+            target: ClickTarget::Button(MouseButton::Left),
             double: false,
             jitter_enabled: false,
             jitter_frac: 0.10,
@@ -126,5 +128,27 @@ pub fn save(settings: &Settings) {
     }
     if let Err(e) = std::fs::write(&path, body) {
         log::warn!("could not save settings to {}: {e}", path.display());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A settings.ron written before `ClickerSettings::target` existed must
+    /// still load: the removed `button` field is ignored, `target` defaults.
+    #[test]
+    fn pre_key_target_settings_still_load() {
+        let old = r#"(
+            version: 1,
+            clicker: (interval_ms: 250, button: Right, double: true),
+        )"#;
+        let settings: Settings = ron::from_str(old).expect("old settings must parse");
+        assert_eq!(settings.clicker.interval_ms, 250);
+        assert!(settings.clicker.double);
+        assert_eq!(
+            settings.clicker.target,
+            ClickTarget::Button(MouseButton::Left)
+        );
     }
 }

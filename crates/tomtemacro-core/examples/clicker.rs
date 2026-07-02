@@ -12,7 +12,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use tomtemacro_core::clicker::{self, ClickKind, ClickPosition, ClickerConfig, Jitter};
+use tomtemacro_core::clicker::{
+    self, ClickKind, ClickPosition, ClickTarget, ClickerConfig, Jitter,
+};
 use tomtemacro_core::inject::{EnigoInjector, InjectError, Injector};
 use tomtemacro_core::model::{EventKind, MouseButton};
 
@@ -139,7 +141,7 @@ fn parse_args() -> Result<ClickerConfig, String> {
 
     Ok(ClickerConfig {
         interval: Duration::from_millis(interval_ms.max(1)),
-        button,
+        target: ClickTarget::Button(button),
         click_kind: if double {
             ClickKind::Double
         } else {

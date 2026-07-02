@@ -3,14 +3,14 @@
 use std::time::{Duration, Instant};
 
 use eframe::egui;
-use tomtemacro_core::clicker::{ClickKind, ClickPosition, ClickerConfig, Jitter};
+use tomtemacro_core::clicker::{ClickKind, ClickPosition, ClickTarget, ClickerConfig, Jitter};
 use tomtemacro_core::engine::{EngineHandle, Mode};
 use tomtemacro_core::inject::{EnigoInjector, Injector};
-use tomtemacro_core::model::MouseButton;
+use tomtemacro_core::model::{Key, MouseButton};
 
 pub struct ClickerUi {
     pub interval_ms: u64,
-    pub button: MouseButton,
+    pub target: ClickTarget,
     pub double: bool,
     pub fixed_position: bool,
     pub x: i32,
@@ -27,7 +27,7 @@ impl Default for ClickerUi {
     fn default() -> Self {
         Self {
             interval_ms: 100,
-            button: MouseButton::Left,
+            target: ClickTarget::Button(MouseButton::Left),
             double: false,
             fixed_position: false,
             x: 0,
@@ -46,7 +46,7 @@ impl ClickerUi {
     pub fn from_settings(s: &crate::settings::ClickerSettings) -> Self {
         Self {
             interval_ms: s.interval_ms,
-            button: s.button,
+            target: s.target,
             double: s.double,
             jitter_enabled: s.jitter_enabled,
             jitter_frac: s.jitter_frac,
@@ -60,7 +60,7 @@ impl ClickerUi {
     pub fn to_settings(&self) -> crate::settings::ClickerSettings {
         crate::settings::ClickerSettings {
             interval_ms: self.interval_ms,
-            button: self.button,
+            target: self.target,
             double: self.double,
             jitter_enabled: self.jitter_enabled,
             jitter_frac: self.jitter_frac,
@@ -73,7 +73,7 @@ impl ClickerUi {
     pub fn config(&self) -> ClickerConfig {
         ClickerConfig {
             interval: Duration::from_millis(self.interval_ms.max(1)),
-            button: self.button,
+            target: self.target,
             click_kind: if self.double {
                 ClickKind::Double
             } else {
@@ -98,21 +98,30 @@ impl ClickerUi {
 
 pub fn show(ui: &mut egui::Ui, state: &mut ClickerUi, engine: &EngineHandle, hotkey: &str) {
     ui.horizontal(|ui| {
-        ui.label("Click every");
+        ui.label("Press every");
         ui.add(
             egui::DragValue::new(&mut state.interval_ms)
                 .range(1..=3_600_000)
                 .suffix(" ms"),
         );
         ui.label("with");
-        egui::ComboBox::from_id_salt("button")
-            .selected_text(button_name(state.button))
+        egui::ComboBox::from_id_salt("target")
+            .selected_text(target_label(state.target))
             .show_ui(ui, |ui| {
                 for b in [MouseButton::Left, MouseButton::Middle, MouseButton::Right] {
-                    ui.selectable_value(&mut state.button, b, button_name(b));
+                    let t = ClickTarget::Button(b);
+                    ui.selectable_value(&mut state.target, t, target_label(t));
+                }
+                ui.separator();
+                for &k in Key::ALL {
+                    ui.selectable_value(&mut state.target, ClickTarget::Key(k), key_label(k));
                 }
             });
-        ui.checkbox(&mut state.double, "double-click");
+        let double_label = match state.target {
+            ClickTarget::Button(_) => "double-click",
+            ClickTarget::Key(_) => "double-tap",
+        };
+        ui.checkbox(&mut state.double, double_label);
     });
 
     ui.add_space(6.0);
@@ -170,12 +179,17 @@ pub fn show(ui: &mut egui::Ui, state: &mut ClickerUi, engine: &EngineHandle, hot
         });
     }
 
+    let press_word = match state.target {
+        ClickTarget::Button(_) => "clicks",
+        ClickTarget::Key(_) => "presses",
+    };
+
     ui.add_space(6.0);
     ui.horizontal(|ui| {
         ui.checkbox(&mut state.limit_enabled, "Stop after");
         if state.limit_enabled {
             ui.add(egui::DragValue::new(&mut state.limit).range(1..=u64::MAX));
-            ui.label("clicks");
+            ui.label(press_word);
         }
     });
 
@@ -200,7 +214,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut ClickerUi, engine: &EngineHandle, hot
             if ui
                 .add_sized(
                     [200.0, 32.0],
-                    egui::Button::new(format!("⏹  Stop — {clicks} clicks  ({hotkey})")),
+                    egui::Button::new(format!("⏹  Stop — {clicks} {press_word}  ({hotkey})")),
                 )
                 .clicked()
             {
@@ -220,4 +234,42 @@ fn button_name(button: MouseButton) -> &'static str {
         MouseButton::Right => "right",
         MouseButton::Other(_) => "other",
     }
+}
+
+fn target_label(target: ClickTarget) -> String {
+    match target {
+        ClickTarget::Button(b) => format!("{} click", button_name(b)),
+        ClickTarget::Key(k) => format!("{} key", key_label(k)),
+    }
+}
+
+/// Human name for a physical key, derived from the variant name:
+/// `KeyE` → "E", `Num1` → "1", `Kp7` → "keypad 7", `PageDown` → "page down".
+fn key_label(key: Key) -> String {
+    let name = format!("{key:?}");
+    if let Some(letter) = name.strip_prefix("Key") {
+        return letter.to_string();
+    }
+    if let Some(digit) = name.strip_prefix("Num") {
+        if digit.len() == 1 {
+            return digit.to_string();
+        }
+    }
+    if let Some(kp) = name.strip_prefix("Kp") {
+        if !kp.is_empty() {
+            return format!("keypad {}", kp.to_lowercase());
+        }
+    }
+    if name.len() > 1 && name.starts_with('F') && name[1..].chars().all(|c| c.is_ascii_digit()) {
+        return name;
+    }
+    // Remaining variants are CamelCase words: "PageDown" → "page down".
+    let mut label = String::new();
+    for c in name.chars() {
+        if c.is_uppercase() && !label.is_empty() {
+            label.push(' ');
+        }
+        label.push(c.to_ascii_lowercase());
+    }
+    label
 }

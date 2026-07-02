@@ -17,7 +17,7 @@ use std::time::Duration;
 use crossbeam_channel::select;
 use global_hotkey::hotkey::{Code, HotKey};
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
-use tomtemacro_core::clicker::{ClickKind, ClickPosition, ClickerConfig};
+use tomtemacro_core::clicker::{ClickKind, ClickPosition, ClickTarget, ClickerConfig};
 use tomtemacro_core::engine::EngineHandle;
 use tomtemacro_core::model::MouseButton;
 
@@ -33,7 +33,7 @@ fn main() {
     let engine = EngineHandle::spawn(None);
     let config = ClickerConfig {
         interval: Duration::from_millis(500),
-        button: MouseButton::Left,
+        target: ClickTarget::Button(MouseButton::Left),
         click_kind: ClickKind::Single,
         position: ClickPosition::FollowCursor,
         jitter: None,

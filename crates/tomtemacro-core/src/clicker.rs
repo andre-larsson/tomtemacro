@@ -1,4 +1,5 @@
-//! The auto-clicker: a drift-free click loop with optional humanized jitter.
+//! The auto-clicker: a drift-free press loop — mouse button or keyboard key —
+//! with optional humanized jitter.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -6,13 +7,20 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 
 use crate::inject::{InjectError, Injector};
-use crate::model::{EventKind, MouseButton};
+use crate::model::{EventKind, Key, MouseButton};
 use crate::timing;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ClickKind {
     Single,
     Double,
+}
+
+/// What gets pressed on every tick of the loop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ClickTarget {
+    Button(MouseButton),
+    Key(Key),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -32,7 +40,7 @@ pub struct Jitter {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ClickerConfig {
     pub interval: Duration,
-    pub button: MouseButton,
+    pub target: ClickTarget,
     pub click_kind: ClickKind,
     pub position: ClickPosition,
     pub jitter: Option<Jitter>,
@@ -40,7 +48,7 @@ pub struct ClickerConfig {
     pub limit: Option<u64>,
 }
 
-/// Gap between the two presses of a double click.
+/// Gap between the two presses of a double click (or key double-tap).
 const DOUBLE_CLICK_GAP: Duration = Duration::from_millis(30);
 /// Jitter never pushes an interval below this.
 const MIN_INTERVAL: Duration = Duration::from_micros(500);
@@ -95,17 +103,25 @@ fn click_once(
             y: f64::from(y),
         })?;
     }
-    press_release(injector, config.button)?;
+    press_release(injector, config.target)?;
     if config.click_kind == ClickKind::Double {
         spin_sleep::sleep(DOUBLE_CLICK_GAP);
-        press_release(injector, config.button)?;
+        press_release(injector, config.target)?;
     }
     Ok(())
 }
 
-fn press_release(injector: &mut dyn Injector, button: MouseButton) -> Result<(), InjectError> {
-    injector.inject(&EventKind::ButtonPress(button))?;
-    injector.inject(&EventKind::ButtonRelease(button))
+fn press_release(injector: &mut dyn Injector, target: ClickTarget) -> Result<(), InjectError> {
+    match target {
+        ClickTarget::Button(button) => {
+            injector.inject(&EventKind::ButtonPress(button))?;
+            injector.inject(&EventKind::ButtonRelease(button))
+        }
+        ClickTarget::Key(key) => {
+            injector.inject(&EventKind::KeyPress(key))?;
+            injector.inject(&EventKind::KeyRelease(key))
+        }
+    }
 }
 
 fn jittered_interval(base: Duration, jitter: Option<Jitter>, rng: &mut fastrand::Rng) -> Duration {
@@ -146,6 +162,7 @@ mod tests {
     struct MockInjector {
         presses: Vec<Instant>,
         moves: Vec<(f64, f64)>,
+        kinds: Vec<EventKind>,
     }
 
     impl MockInjector {
@@ -153,12 +170,14 @@ mod tests {
             Self {
                 presses: Vec::new(),
                 moves: Vec::new(),
+                kinds: Vec::new(),
             }
         }
     }
 
     impl Injector for MockInjector {
         fn inject(&mut self, kind: &EventKind) -> Result<(), InjectError> {
+            self.kinds.push(*kind);
             match kind {
                 EventKind::ButtonPress(_) => self.presses.push(Instant::now()),
                 EventKind::MouseMove { x, y } => self.moves.push((*x, *y)),
@@ -175,7 +194,7 @@ mod tests {
     fn base_config() -> ClickerConfig {
         ClickerConfig {
             interval: Duration::from_millis(20),
-            button: MouseButton::Left,
+            target: ClickTarget::Button(MouseButton::Left),
             click_kind: ClickKind::Single,
             position: ClickPosition::FollowCursor,
             jitter: None,
@@ -235,6 +254,26 @@ mod tests {
         assert_eq!(count, 1); // the first click fires immediately
         assert!(elapsed < Duration::from_millis(500), "took {elapsed:?}");
         handle.join().unwrap();
+    }
+
+    #[test]
+    fn key_target_taps_the_key() {
+        let mut mock = MockInjector::new();
+        let stop = AtomicBool::new(false);
+        let counter = AtomicU64::new(0);
+        let mut config = base_config();
+        config.interval = Duration::from_millis(1);
+        config.target = ClickTarget::Key(Key::KeyE);
+        config.limit = Some(3);
+
+        let count = run(&mut mock, &config, &stop, &counter).unwrap();
+        assert_eq!(count, 3);
+        let expected = [
+            EventKind::KeyPress(Key::KeyE),
+            EventKind::KeyRelease(Key::KeyE),
+        ]
+        .repeat(3);
+        assert_eq!(mock.kinds, expected);
     }
 
     #[test]

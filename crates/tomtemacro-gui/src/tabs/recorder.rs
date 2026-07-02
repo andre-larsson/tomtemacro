@@ -38,6 +38,23 @@ impl Default for RecorderUi {
 }
 
 impl RecorderUi {
+    pub fn from_settings(s: &crate::settings::PlaybackSettings) -> Self {
+        Self {
+            speed: s.speed,
+            repeat_times: s.repeat_times,
+            repeat_infinite: s.repeat_infinite,
+            ..Default::default()
+        }
+    }
+
+    pub fn playback_settings(&self) -> crate::settings::PlaybackSettings {
+        crate::settings::PlaybackSettings {
+            speed: self.speed,
+            repeat_times: self.repeat_times,
+            repeat_infinite: self.repeat_infinite,
+        }
+    }
+
     pub fn playback_options(&self) -> PlaybackOptions {
         PlaybackOptions {
             speed: self.speed,
@@ -59,6 +76,7 @@ impl RecorderUi {
     }
 }
 
+/// Returns true if a macro was saved this frame (the library should reload).
 #[allow(clippy::too_many_arguments)]
 pub fn show(
     ui: &mut egui::Ui,
@@ -69,7 +87,8 @@ pub fn show(
     record_key: &str,
     play_key: &str,
     stop_key: &str,
-) {
+) -> bool {
+    let mut saved = false;
     match engine.shared.mode() {
         Mode::Idle => {
             ui.horizontal(|ui| {
@@ -186,6 +205,7 @@ pub fn show(
                         state.playable = Some(Arc::new(file.clone()));
                         state.playable_name = file.meta.name;
                         keep = false;
+                        saved = true;
                     }
                     Err(e) => state.notice = Some(format!("save failed: {e}")),
                 }
@@ -215,4 +235,5 @@ pub fn show(
         ui.add_space(4.0);
         ui.weak(notice);
     }
+    saved
 }

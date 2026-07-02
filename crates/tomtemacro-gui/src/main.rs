@@ -3,6 +3,7 @@
 mod app;
 mod banners;
 mod hotkeys;
+mod settings;
 mod tabs;
 
 fn main() -> eframe::Result {

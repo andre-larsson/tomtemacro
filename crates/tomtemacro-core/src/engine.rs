@@ -286,7 +286,8 @@ fn engine_main<F, I>(
                 }
             }
             Command::StartRecording(config) => {
-                let shutdown = record_activity(&commands, &capture, &shared, &push, config);
+                let shutdown =
+                    record_activity(&commands, &capture, &shared, &push, &mut injector, config);
                 if shutdown || drain_stale_starts(&commands) {
                     break;
                 }
@@ -304,6 +305,7 @@ fn record_activity(
     capture: &Receiver<CaptureEvent>,
     shared: &SharedState,
     push: &impl Fn(Status),
+    injector: &mut impl Injector,
     config: RecordConfig,
 ) -> bool {
     // Anything stuck in the channel predates this recording.
@@ -346,12 +348,19 @@ fn record_activity(
 
     let events = recorder.finish(stopped_at);
     let session = platform::detect_session();
+    let screen = injector.main_display().ok().and_then(|(w, h)| {
+        Some(crate::model::ScreenInfo {
+            width: u32::try_from(w).ok()?,
+            height: u32::try_from(h).ok()?,
+            scale: 1.0,
+        })
+    });
     let file = MacroFile::new(
         MacroMeta {
             name: String::new(),
             created_utc: storage::now_utc_rfc3339(),
             os: platform::os_label(session).to_string(),
-            screen: None,
+            screen,
             notes: String::new(),
         },
         events,

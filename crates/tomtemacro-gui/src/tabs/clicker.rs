@@ -43,6 +43,33 @@ impl Default for ClickerUi {
 }
 
 impl ClickerUi {
+    pub fn from_settings(s: &crate::settings::ClickerSettings) -> Self {
+        Self {
+            interval_ms: s.interval_ms,
+            button: s.button,
+            double: s.double,
+            jitter_enabled: s.jitter_enabled,
+            jitter_frac: s.jitter_frac,
+            jitter_px: s.jitter_px,
+            limit_enabled: s.limit_enabled,
+            limit: s.limit,
+            ..Default::default()
+        }
+    }
+
+    pub fn to_settings(&self) -> crate::settings::ClickerSettings {
+        crate::settings::ClickerSettings {
+            interval_ms: self.interval_ms,
+            button: self.button,
+            double: self.double,
+            jitter_enabled: self.jitter_enabled,
+            jitter_frac: self.jitter_frac,
+            jitter_px: self.jitter_px,
+            limit_enabled: self.limit_enabled,
+            limit: self.limit,
+        }
+    }
+
     pub fn config(&self) -> ClickerConfig {
         ClickerConfig {
             interval: Duration::from_millis(self.interval_ms.max(1)),

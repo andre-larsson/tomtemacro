@@ -15,10 +15,13 @@ path = "src/main.rs"
 tomtemacro-core.workspace = true
 anyhow.workspace = true
 crossbeam-channel.workspace = true
+directories.workspace = true
 eframe.workspace = true
 global-hotkey.workspace = true
 log.workspace = true
 env_logger.workspace = true
+ron.workspace = true
+serde.workspace = true
 
 [features]
 # Tray icon support lands in phase 7; feature exists so CI covers the flag.

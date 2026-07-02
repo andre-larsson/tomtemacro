@@ -18,6 +18,11 @@ pub trait Injector {
     fn inject(&mut self, kind: &EventKind) -> Result<(), InjectError>;
     /// Current cursor position in global virtual-desktop pixels.
     fn cursor_location(&mut self) -> Result<(i32, i32), InjectError>;
+    /// Size of the main display, used to stamp recordings so playback on a
+    /// different screen layout can warn. Optional for mock backends.
+    fn main_display(&mut self) -> Result<(i32, i32), InjectError> {
+        Err(InjectError::Inject("display size unavailable".into()))
+    }
 }
 
 pub struct EnigoInjector {
@@ -87,6 +92,12 @@ impl Injector for EnigoInjector {
     fn cursor_location(&mut self) -> Result<(i32, i32), InjectError> {
         self.enigo
             .location()
+            .map_err(|e| InjectError::Inject(e.to_string()))
+    }
+
+    fn main_display(&mut self) -> Result<(i32, i32), InjectError> {
+        self.enigo
+            .main_display()
             .map_err(|e| InjectError::Inject(e.to_string()))
     }
 }

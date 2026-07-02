@@ -11,19 +11,25 @@ use crossbeam_channel::Receiver;
 use eframe::egui;
 use tomtemacro_core::capture::{CaptureError, InputCapture, RdevCapture};
 use tomtemacro_core::engine::{Command, EngineHandle, FinishReason, Mode, Status};
+use tomtemacro_core::inject::{EnigoInjector, Injector};
 use tomtemacro_core::platform::{self, SessionKind};
 use tomtemacro_core::recorder::RecordConfig;
 use tomtemacro_core::storage::MacroStore;
 
 use crate::banners::{self, Banner, Severity};
 use crate::hotkeys::{Action, Hotkeys};
+use crate::settings::{self, Settings};
 use crate::tabs::clicker::ClickerUi;
+use crate::tabs::library::LibraryUi;
 use crate::tabs::recorder::RecorderUi;
+use crate::tabs::settings_tab::SettingsUi;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Tab {
     Clicker,
     Recorder,
+    Library,
+    Settings,
 }
 
 pub struct TomteApp {
@@ -36,18 +42,23 @@ pub struct TomteApp {
     store_error: Option<String>,
     fatal: Option<String>,
     session: SessionKind,
+    settings: Settings,
     tab: Tab,
     clicker: ClickerUi,
     recorder: RecorderUi,
+    library: LibraryUi,
+    settings_ui: SettingsUi,
     last_finish: Option<(Mode, FinishReason, Instant)>,
 }
 
 impl TomteApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        let settings = settings::load();
+
         let ctx = cc.egui_ctx.clone();
         let engine = EngineHandle::spawn(Some(Box::new(move || ctx.request_repaint())));
         let capture_errors = RdevCapture.start(engine.shared.clone(), engine.capture_sender());
-        let (hotkeys, hotkey_error) = match Hotkeys::register_defaults() {
+        let (hotkeys, hotkey_error) = match Hotkeys::register(&settings.hotkeys) {
             Ok(h) => (Some(h), None),
             Err(e) => (None, Some(e)),
         };
@@ -55,6 +66,13 @@ impl TomteApp {
             Ok(s) => (Some(s), None),
             Err(e) => (None, Some(e.to_string())),
         };
+
+        let mut library = LibraryUi::default();
+        library.current_screen = EnigoInjector::new()
+            .ok()
+            .and_then(|mut e| e.main_display().ok())
+            .and_then(|(w, h)| Some((u32::try_from(w).ok()?, u32::try_from(h).ok()?)));
+
         Self {
             engine,
             capture_errors,
@@ -65,9 +83,18 @@ impl TomteApp {
             store_error,
             fatal: None,
             session: platform::detect_session(),
-            tab: Tab::Clicker,
-            clicker: ClickerUi::default(),
-            recorder: RecorderUi::default(),
+            clicker: ClickerUi::from_settings(&settings.clicker),
+            recorder: RecorderUi::from_settings(&settings.playback),
+            library,
+            settings_ui: SettingsUi::default(),
+            settings,
+            // Start-tab override for tests/screenshots.
+            tab: match std::env::var("TOMTE_START_TAB").as_deref() {
+                Ok("recorder") => Tab::Recorder,
+                Ok("library") => Tab::Library,
+                Ok("settings") => Tab::Settings,
+                _ => Tab::Clicker,
+            },
             last_finish: None,
         }
     }
@@ -251,6 +278,8 @@ impl eframe::App for TomteApp {
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut self.tab, Tab::Clicker, "🖱 Clicker");
                 ui.selectable_value(&mut self.tab, Tab::Recorder, "⏺ Recorder");
+                ui.selectable_value(&mut self.tab, Tab::Library, "📚 Library");
+                ui.selectable_value(&mut self.tab, Tab::Settings, "⛭ Settings");
             });
             ui.separator();
             match self.tab {
@@ -258,31 +287,75 @@ impl eframe::App for TomteApp {
                     let hotkey = self
                         .hotkeys
                         .as_ref()
-                        .map_or("", |h| h.label_for(Action::ToggleClicker));
-                    crate::tabs::clicker::show(ui, &mut self.clicker, &self.engine, hotkey);
+                        .map_or("", |h| h.label_for(Action::ToggleClicker))
+                        .to_owned();
+                    crate::tabs::clicker::show(ui, &mut self.clicker, &self.engine, &hotkey);
                 }
                 Tab::Recorder => {
                     let (record_key, play_key, stop_key) = match &self.hotkeys {
                         Some(h) => (
-                            h.label_for(Action::ToggleRecord),
-                            h.label_for(Action::PlayMacro),
-                            h.label_for(Action::StopAll),
+                            h.label_for(Action::ToggleRecord).to_owned(),
+                            h.label_for(Action::PlayMacro).to_owned(),
+                            h.label_for(Action::StopAll).to_owned(),
                         ),
-                        None => ("", "", ""),
+                        None => (String::new(), String::new(), String::new()),
                     };
                     let strip = self.strip_keys();
-                    crate::tabs::recorder::show(
+                    let saved = crate::tabs::recorder::show(
                         ui,
                         &mut self.recorder,
                         &self.engine,
                         self.store.as_ref(),
                         strip,
-                        record_key,
-                        play_key,
-                        stop_key,
+                        &record_key,
+                        &play_key,
+                        &stop_key,
                     );
+                    if saved {
+                        self.library.mark_dirty();
+                    }
+                }
+                Tab::Library => {
+                    let play_key = self
+                        .hotkeys
+                        .as_ref()
+                        .map_or("", |h| h.label_for(Action::PlayMacro))
+                        .to_owned();
+                    let played = crate::tabs::library::show(
+                        ui,
+                        &mut self.library,
+                        &self.engine,
+                        self.store.as_ref(),
+                        self.recorder.playback_options(),
+                        &play_key,
+                    );
+                    if let Some(file) = played {
+                        // Whatever played last becomes the play-hotkey target.
+                        self.recorder.playable_name = file.meta.name.clone();
+                        self.recorder.playable = Some(file);
+                    }
+                }
+                Tab::Settings => {
+                    crate::tabs::settings_tab::show(
+                        ui,
+                        &mut self.settings_ui,
+                        &mut self.settings.hotkeys,
+                        &mut self.hotkeys,
+                    );
+                    // A successful rebind clears an old registration failure.
+                    if self.hotkeys.is_some() {
+                        self.hotkey_error = None;
+                    }
                 }
             }
         });
+    }
+}
+
+impl Drop for TomteApp {
+    fn drop(&mut self) {
+        self.settings.clicker = self.clicker.to_settings();
+        self.settings.playback = self.recorder.playback_settings();
+        settings::save(&self.settings);
     }
 }

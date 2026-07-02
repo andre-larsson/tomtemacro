@@ -6,7 +6,7 @@
 
 #![cfg(target_os = "linux")]
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use tomtemacro_core::capture::{InputCapture, RdevCapture};
@@ -16,9 +16,15 @@ use tomtemacro_core::model::{EventKind, Key, MouseButton};
 use tomtemacro_core::player::{PlaybackOptions, Repeat};
 use tomtemacro_core::recorder::RecordConfig;
 
+/// These tests all drive the display's one cursor/keyboard, so they must not
+/// run concurrently (the default test runner uses threads). A failed test
+/// poisons the mutex; later tests still need the lock, hence `into_inner`.
+static X_DISPLAY: Mutex<()> = Mutex::new(());
+
 #[test]
 #[ignore = "needs an X server"]
 fn cursor_move_round_trips() {
+    let _display = X_DISPLAY.lock().unwrap_or_else(PoisonError::into_inner);
     let mut injector = EnigoInjector::new().expect("X11 injection backend");
     let original = injector.cursor_location().expect("read cursor");
 
@@ -75,6 +81,7 @@ fn recording_finished(engine: &EngineHandle) -> tomtemacro_core::model::MacroFil
 #[test]
 #[ignore = "needs an X server"]
 fn record_and_replay_mouse_moves() {
+    let _display = X_DISPLAY.lock().unwrap_or_else(PoisonError::into_inner);
     let engine = EngineHandle::spawn(None);
     let capture_errors = RdevCapture.start(engine.shared.clone(), engine.capture_sender());
 
@@ -166,6 +173,7 @@ fn full_event_kinds_round_trip() {
         return;
     }
 
+    let _display = X_DISPLAY.lock().unwrap_or_else(PoisonError::into_inner);
     let engine = EngineHandle::spawn(None);
     let capture_errors = RdevCapture.start(engine.shared.clone(), engine.capture_sender());
     let mut injector = EnigoInjector::new().expect("injection backend");

@@ -352,6 +352,8 @@ fn named_key(key: Key) -> InjectKey {
         Space => E::Space,
         Tab => E::Tab,
         UpArrow => E::UpArrow,
+        // enigo has no PrintScr on macOS (no such key on Mac keyboards).
+        #[cfg(target_os = "windows")]
         PrintScreen => E::PrintScr,
         Kp0 => E::Numpad0,
         Kp1 => E::Numpad1,

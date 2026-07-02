@@ -4,6 +4,7 @@
 
 pub mod clicker;
 pub mod convert;
+pub mod engine;
 pub mod inject;
 pub mod model;
 pub mod timing;

@@ -20,6 +20,9 @@ fastrand.workspace = true
 
 [dev-dependencies]
 env_logger.workspace = true
+# For the phase-2 hotkey harness example and smoke test; the GUI owns the
+# hotkey manager in the real app.
+global-hotkey.workspace = true
 
 [lints]
 workspace = true

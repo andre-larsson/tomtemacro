@@ -200,8 +200,18 @@ mod tests {
             .map(|w| w[1].duration_since(w[0]).as_micros() as i64 - 20_000)
             .collect();
         let mean_abs_us = errors_us.iter().map(|e| e.abs()).sum::<i64>() / errors_us.len() as i64;
-        // < 1 ms locally; generous bound so loaded CI runners don't flake.
-        assert!(mean_abs_us < 5_000, "mean interval error {mean_abs_us} µs");
+        // < 1 ms on real hardware. Hosted CI runners (macOS especially) have
+        // contended schedulers that stall for tens of ms — only sanity-check
+        // there; precision is properly measured locally and by examples/clicker.
+        let limit_us = if std::env::var_os("CI").is_some() {
+            20_000
+        } else {
+            5_000
+        };
+        assert!(
+            mean_abs_us < limit_us,
+            "mean interval error {mean_abs_us} µs"
+        );
     }
 
     #[test]

@@ -236,10 +236,8 @@ fn engine_main<F, I>(
         }
     };
 
-    loop {
-        let Ok(command) = commands.recv() else {
-            break; // all senders dropped
-        };
+    // recv() erroring means all senders dropped — same as shutdown.
+    while let Ok(command) = commands.recv() {
         match command {
             Command::Shutdown => break,
             Command::StopActivity => {} // already idle

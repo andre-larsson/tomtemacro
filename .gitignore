@@ -1,0 +1,18 @@
+/target/
+**/*.rs.bk
+*.pdb
+
+# NOTE: Cargo.lock is committed (workspace ships binaries)
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# editors
+.idea/
+.vscode/
+*.swp
+
+# local scratch / test artifacts
+/scratch/
+*.log

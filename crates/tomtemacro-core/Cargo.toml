@@ -1,0 +1,25 @@
+[package]
+name = "tomtemacro-core"
+description = "Engine for TomteMacro: input model, injection, capture, recording, playback"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+ron.workspace = true
+crossbeam-channel.workspace = true
+spin_sleep.workspace = true
+enigo.workspace = true
+directories.workspace = true
+thiserror.workspace = true
+log.workspace = true
+fastrand.workspace = true
+
+[dev-dependencies]
+env_logger.workspace = true
+
+[lints]
+workspace = true

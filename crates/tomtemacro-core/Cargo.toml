@@ -8,6 +8,7 @@ authors.workspace = true
 repository.workspace = true
 
 [dependencies]
+rdev.workspace = true
 serde.workspace = true
 ron.workspace = true
 crossbeam-channel.workspace = true

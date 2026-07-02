@@ -17,11 +17,18 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
+use std::time::Instant;
 
-use crossbeam_channel::{unbounded, Receiver, Sender};
+use crossbeam_channel::{select, unbounded, Receiver, Sender};
 
+use crate::capture::CaptureEvent;
 use crate::clicker::{self, ClickerConfig};
 use crate::inject::{EnigoInjector, InjectError, Injector};
+use crate::model::{MacroFile, MacroMeta};
+use crate::platform;
+use crate::player::{self, PlayOutcome, PlaybackOptions};
+use crate::recorder::{RecordConfig, Recorder};
+use crate::storage;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -77,6 +84,11 @@ impl SharedState {
 #[derive(Debug)]
 pub enum Command {
     StartClicker(ClickerConfig),
+    StartRecording(RecordConfig),
+    PlayMacro {
+        file: Arc<MacroFile>,
+        options: PlaybackOptions,
+    },
     /// No-op if idle; otherwise equivalent to `SharedState::request_stop`.
     StopActivity,
     Shutdown,
@@ -85,6 +97,9 @@ pub enum Command {
 #[derive(Debug)]
 pub enum Status {
     ModeChanged(Mode),
+    /// The recording that just stopped, with metadata stamped but no name
+    /// yet — the frontend names and saves it.
+    RecordingFinished(Box<MacroFile>),
     Finished {
         mode: Mode,
         reason: FinishReason,
@@ -113,6 +128,7 @@ pub struct EngineHandle {
     pub shared: Arc<SharedState>,
     commands: Sender<Command>,
     pub status: Receiver<Status>,
+    capture_tx: Sender<CaptureEvent>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -132,6 +148,7 @@ impl EngineHandle {
     {
         let (command_tx, command_rx) = unbounded();
         let (status_tx, status_rx) = unbounded();
+        let (capture_tx, capture_rx) = unbounded();
         let shared = Arc::new(SharedState::default());
         let shared_for_thread = shared.clone();
         let thread = std::thread::Builder::new()
@@ -139,6 +156,7 @@ impl EngineHandle {
             .spawn(move || {
                 engine_main(
                     command_rx,
+                    capture_rx,
                     status_tx,
                     shared_for_thread,
                     make_injector,
@@ -150,8 +168,15 @@ impl EngineHandle {
             shared,
             commands: command_tx,
             status: status_rx,
+            capture_tx,
             thread: Some(thread),
         }
+    }
+
+    /// Where a capture backend (see [`crate::capture::InputCapture`])
+    /// delivers events for recording. Tests can feed synthetic events here.
+    pub fn capture_sender(&self) -> Sender<CaptureEvent> {
+        self.capture_tx.clone()
     }
 
     pub fn send(&self, command: Command) {
@@ -187,6 +212,7 @@ impl Drop for EngineHandle {
 
 fn engine_main<F, I>(
     commands: Receiver<Command>,
+    capture: Receiver<CaptureEvent>,
     status: Sender<Status>,
     shared: Arc<SharedState>,
     make_injector: F,
@@ -239,9 +265,106 @@ fn engine_main<F, I>(
                     break; // shutdown arrived while we were busy
                 }
             }
+            Command::PlayMacro { file, options } => {
+                run_activity(Mode::Playing, &shared, &push, |shared| {
+                    shared.playback_iteration.store(0, Ordering::Relaxed);
+                    match player::run(
+                        &mut injector,
+                        &file,
+                        &options,
+                        shared.stop_flag(),
+                        &shared.playback_iteration,
+                    ) {
+                        Ok(PlayOutcome::Completed) => FinishReason::Completed,
+                        Ok(PlayOutcome::Stopped) => FinishReason::Stopped,
+                        Err(e) => {
+                            log::error!("playback failed: {e}");
+                            FinishReason::Failed
+                        }
+                    }
+                });
+                if drain_stale_starts(&commands) {
+                    break;
+                }
+            }
+            Command::StartRecording(config) => {
+                let shutdown = record_activity(&commands, &capture, &shared, &push, config);
+                if shutdown || drain_stale_starts(&commands) {
+                    break;
+                }
+            }
         }
     }
     shared.set_mode(Mode::Idle);
+}
+
+/// Recording can't use `run_activity`: it multiplexes the capture stream
+/// with the command channel and produces a `MacroFile`. Returns true if a
+/// shutdown was requested mid-recording.
+fn record_activity(
+    commands: &Receiver<Command>,
+    capture: &Receiver<CaptureEvent>,
+    shared: &SharedState,
+    push: &impl Fn(Status),
+    config: RecordConfig,
+) -> bool {
+    // Anything stuck in the channel predates this recording.
+    while capture.try_recv().is_ok() {}
+
+    shared.events_recorded.store(0, Ordering::Relaxed);
+    shared.stop.store(false, Ordering::Relaxed);
+    shared.set_mode(Mode::Recording); // opens the capture gate
+    push(Status::ModeChanged(Mode::Recording));
+
+    let mut recorder = Recorder::new(config);
+    let mut shutdown = false;
+    let stopped_at = loop {
+        if shared.stop.load(Ordering::Relaxed) {
+            break Instant::now();
+        }
+        select! {
+            recv(capture) -> event => {
+                if let Ok((at, kind)) = event {
+                    if recorder.push(at, kind) {
+                        shared.events_recorded.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+            }
+            recv(commands) -> command => match command {
+                Ok(Command::StopActivity) => break Instant::now(),
+                Ok(Command::Shutdown) | Err(_) => {
+                    shutdown = true;
+                    break Instant::now();
+                }
+                Ok(other) => log::debug!("ignoring {other:?} while recording"),
+            }
+        }
+    };
+
+    shared.set_mode(Mode::Idle); // closes the gate
+                                 // Give events already past the gate check a moment to land, then drop
+                                 // them — they arrived after the user asked to stop.
+    while capture.try_recv().is_ok() {}
+
+    let events = recorder.finish(stopped_at);
+    let session = platform::detect_session();
+    let file = MacroFile::new(
+        MacroMeta {
+            name: String::new(),
+            created_utc: storage::now_utc_rfc3339(),
+            os: platform::os_label(session).to_string(),
+            screen: None,
+            notes: String::new(),
+        },
+        events,
+    );
+    push(Status::RecordingFinished(Box::new(file)));
+    push(Status::Finished {
+        mode: Mode::Recording,
+        reason: FinishReason::Completed,
+    });
+    push(Status::ModeChanged(Mode::Idle));
+    shutdown
 }
 
 /// Standard bracket around any activity: clear the stop flag, flip the mode,
@@ -381,6 +504,104 @@ mod tests {
         std::thread::sleep(Duration::from_millis(50));
         assert_eq!(engine.shared.mode(), Mode::Idle);
         assert!(engine.status.try_recv().is_err());
+    }
+
+    #[test]
+    fn recording_collects_fed_events() {
+        use crate::model::Key;
+
+        let engine = EngineHandle::spawn_with(|| Ok(NullInjector), None);
+        let tx = engine.capture_sender();
+        engine.send(Command::StartRecording(RecordConfig {
+            trim_tail: Duration::ZERO, // don't trim the synthetic tail
+            ..Default::default()
+        }));
+        assert!(matches!(
+            recv_status(&engine),
+            Status::ModeChanged(Mode::Recording)
+        ));
+
+        let t = std::time::Instant::now();
+        tx.send((t, EventKind::KeyPress(Key::KeyA))).unwrap();
+        tx.send((
+            t + Duration::from_millis(30),
+            EventKind::KeyRelease(Key::KeyA),
+        ))
+        .unwrap();
+        std::thread::sleep(Duration::from_millis(50)); // let the engine drain
+        engine.request_stop();
+
+        let Status::RecordingFinished(file) = recv_status(&engine) else {
+            panic!("expected RecordingFinished first");
+        };
+        assert_eq!(file.events.len(), 2);
+        assert_eq!(file.events[0].delay_us, 0);
+        assert_eq!(file.events[1].delay_us, 30_000);
+        assert!(!file.meta.created_utc.is_empty());
+        assert!(matches!(
+            recv_status(&engine),
+            Status::Finished {
+                mode: Mode::Recording,
+                reason: FinishReason::Completed
+            }
+        ));
+    }
+
+    #[test]
+    fn playback_replays_macro_through_engine() {
+        use crate::model::{Key, MacroEvent, MacroMeta};
+        use std::sync::Mutex;
+
+        // An injector that counts events into a shared cell.
+        struct CountingInjector(Arc<Mutex<Vec<EventKind>>>);
+        impl Injector for CountingInjector {
+            fn inject(&mut self, kind: &EventKind) -> Result<(), InjectError> {
+                self.0.lock().unwrap().push(*kind);
+                Ok(())
+            }
+            fn cursor_location(&mut self) -> Result<(i32, i32), InjectError> {
+                Ok((0, 0))
+            }
+        }
+
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let seen_for_engine = seen.clone();
+        let engine = EngineHandle::spawn_with(move || Ok(CountingInjector(seen_for_engine)), None);
+
+        let file = Arc::new(MacroFile::new(
+            MacroMeta::default(),
+            vec![
+                MacroEvent {
+                    delay_us: 0,
+                    kind: EventKind::KeyPress(Key::KeyX),
+                },
+                MacroEvent {
+                    delay_us: 5_000,
+                    kind: EventKind::KeyRelease(Key::KeyX),
+                },
+            ],
+        ));
+        engine.send(Command::PlayMacro {
+            file,
+            options: crate::player::PlaybackOptions {
+                speed: 1.0,
+                repeat: crate::player::Repeat::Times(3),
+            },
+        });
+
+        assert!(matches!(
+            recv_status(&engine),
+            Status::ModeChanged(Mode::Playing)
+        ));
+        assert!(matches!(
+            recv_status(&engine),
+            Status::Finished {
+                mode: Mode::Playing,
+                reason: FinishReason::Completed
+            }
+        ));
+        assert_eq!(seen.lock().unwrap().len(), 6);
+        assert_eq!(engine.shared.playback_iteration.load(Ordering::Relaxed), 3);
     }
 
     #[test]

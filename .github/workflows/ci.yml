@@ -41,3 +41,5 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libx11-dev libxtst-dev libxi-dev xvfb
       - uses: Swatinem/rust-cache@v2
       - run: xvfb-run -a cargo test --workspace -- --ignored
+        env:
+          TOMTE_FULL_SMOKE: "1"

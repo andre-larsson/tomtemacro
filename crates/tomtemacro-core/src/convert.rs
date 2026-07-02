@@ -10,7 +10,157 @@
 //!   for printables; refined to scancode/virtual-keycode tables in the
 //!   cross-platform hardening phase.
 
-use crate::model::{Key, MouseButton};
+use crate::model::{EventKind, Key, MouseButton};
+
+/// rdev capture event → core event. Timestamping happens at the capture
+/// site; this is pure kind conversion.
+pub fn rdev_to_core(event_type: &rdev::EventType) -> EventKind {
+    use rdev::EventType as E;
+    match event_type {
+        E::KeyPress(k) => EventKind::KeyPress(rdev_key_to_core(*k)),
+        E::KeyRelease(k) => EventKind::KeyRelease(rdev_key_to_core(*k)),
+        E::ButtonPress(b) => EventKind::ButtonPress(rdev_button_to_core(*b)),
+        E::ButtonRelease(b) => EventKind::ButtonRelease(rdev_button_to_core(*b)),
+        E::MouseMove { x, y } => EventKind::MouseMove { x: *x, y: *y },
+        // rdev: delta_y > 0 is scroll-up, delta_x > 0 is scroll-right —
+        // matches the core model's convention directly.
+        E::Wheel { delta_x, delta_y } => EventKind::Wheel {
+            dx: *delta_x as i32,
+            dy: *delta_y as i32,
+        },
+    }
+}
+
+pub fn rdev_button_to_core(button: rdev::Button) -> MouseButton {
+    match button {
+        rdev::Button::Left => MouseButton::Left,
+        rdev::Button::Right => MouseButton::Right,
+        rdev::Button::Middle => MouseButton::Middle,
+        rdev::Button::Unknown(code) => MouseButton::Other(code),
+    }
+}
+
+/// The core `Key` enum mirrors rdev's variant names 1:1, so the mapping is
+/// mechanical. The match is exhaustive on purpose: if an rdev update adds a
+/// variant, this fails to compile instead of silently dropping keys.
+macro_rules! mirror_rdev_keys {
+    ($($name:ident),* $(,)?) => {
+        pub fn rdev_key_to_core(key: rdev::Key) -> Key {
+            match key {
+                $(rdev::Key::$name => Key::$name,)*
+                rdev::Key::Unknown(code) => Key::Unknown(code),
+            }
+        }
+    };
+}
+
+mirror_rdev_keys!(
+    Alt,
+    AltGr,
+    Backspace,
+    CapsLock,
+    ControlLeft,
+    ControlRight,
+    Delete,
+    DownArrow,
+    End,
+    Escape,
+    F1,
+    F2,
+    F3,
+    F4,
+    F5,
+    F6,
+    F7,
+    F8,
+    F9,
+    F10,
+    F11,
+    F12,
+    Home,
+    LeftArrow,
+    MetaLeft,
+    MetaRight,
+    PageDown,
+    PageUp,
+    Return,
+    RightArrow,
+    ShiftLeft,
+    ShiftRight,
+    Space,
+    Tab,
+    UpArrow,
+    PrintScreen,
+    ScrollLock,
+    Pause,
+    NumLock,
+    BackQuote,
+    Num1,
+    Num2,
+    Num3,
+    Num4,
+    Num5,
+    Num6,
+    Num7,
+    Num8,
+    Num9,
+    Num0,
+    Minus,
+    Equal,
+    KeyQ,
+    KeyW,
+    KeyE,
+    KeyR,
+    KeyT,
+    KeyY,
+    KeyU,
+    KeyI,
+    KeyO,
+    KeyP,
+    LeftBracket,
+    RightBracket,
+    KeyA,
+    KeyS,
+    KeyD,
+    KeyF,
+    KeyG,
+    KeyH,
+    KeyJ,
+    KeyK,
+    KeyL,
+    SemiColon,
+    Quote,
+    BackSlash,
+    IntlBackslash,
+    KeyZ,
+    KeyX,
+    KeyC,
+    KeyV,
+    KeyB,
+    KeyN,
+    KeyM,
+    Comma,
+    Dot,
+    Slash,
+    Insert,
+    KpReturn,
+    KpMinus,
+    KpPlus,
+    KpMultiply,
+    KpDivide,
+    Kp0,
+    Kp1,
+    Kp2,
+    Kp3,
+    Kp4,
+    Kp5,
+    Kp6,
+    Kp7,
+    Kp8,
+    Kp9,
+    KpDelete,
+    Function,
+);
 
 /// How to inject a [`Key`] on the current platform.
 #[derive(Debug, Clone, Copy, PartialEq)]

@@ -7,7 +7,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 authors = ["André Larsson <larsson.andre@gmail.com>"]
-repository = "https://github.com/andrelarsson/tomtemacro"
+repository = "https://github.com/andre-larsson/tomtemacro"
 
 [workspace.dependencies]
 tomtemacro-core = { path = "crates/tomtemacro-core" }

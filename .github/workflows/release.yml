@@ -1,0 +1,93 @@
+name: Release
+
+# Asset names are versionless on purpose: the website links to
+# releases/latest/download/<asset>, which only stays valid if every
+# release ships the same file names.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ubuntu-22.04 rather than -latest: glibc 2.35 baseline so the
+          # binary runs on older distros.
+          - os: ubuntu-22.04
+            asset: tomte-linux-x86_64.tar.gz
+          - os: windows-latest
+            asset: tomte-windows-x86_64.zip
+          - os: macos-latest
+            asset: tomte-macos-universal.tar.gz
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install X11 build deps
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libx11-dev libxtst-dev libxi-dev
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        if: runner.os != 'macOS'
+        run: cargo build --release -p tomtemacro-gui
+
+      # Universal binary so one download serves both Apple Silicon and
+      # Intel Macs. Ad-hoc codesign: arm64 macOS refuses to run binaries
+      # with no signature at all.
+      - name: Build universal binary (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          cargo build --release -p tomtemacro-gui --target aarch64-apple-darwin
+          cargo build --release -p tomtemacro-gui --target x86_64-apple-darwin
+          mkdir -p target/release
+          lipo -create -output target/release/tomte \
+            target/aarch64-apple-darwin/release/tomte \
+            target/x86_64-apple-darwin/release/tomte
+          codesign --force -s - target/release/tomte
+
+      - name: Package (tar.gz)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir stage
+          cp target/release/tomte LICENSE-MIT LICENSE-APACHE README.md stage/
+          tar -C stage -czf "${{ matrix.asset }}" .
+
+      - name: Package (zip)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory stage | Out-Null
+          Copy-Item target/release/tomte.exe, LICENSE-MIT, LICENSE-APACHE, README.md stage/
+          Compress-Archive -Path stage/* -DestinationPath "${{ matrix.asset }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+          if-no-files-found: error
+
+  # Separate job so the release appears atomically with all three assets:
+  # no window where a latest/download URL 404s because its platform's
+  # build finished late.
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: assets/*
+          generate_release_notes: true

@@ -31,6 +31,21 @@ clicking and typing so you don't have to.
 | macOS | ✅ Supported | Requires the **Accessibility** permission (System Settings → Privacy & Security → Accessibility) for both recording and playback. TomteMacro guides you through this on first launch. |
 | Linux (Wayland) | ❌ Not yet | Wayland by design blocks global input capture/injection. TomteMacro detects Wayland sessions and warns. An `evdev`/`uinput` backend is planned. |
 
+## Download
+
+Prebuilt binaries for the latest release (these links always point at the
+newest version):
+
+- [Linux x86_64](https://github.com/andre-larsson/tomtemacro/releases/latest/download/tomte-linux-x86_64.tar.gz)
+- [Windows x86_64](https://github.com/andre-larsson/tomtemacro/releases/latest/download/tomte-windows-x86_64.zip)
+- [macOS universal](https://github.com/andre-larsson/tomtemacro/releases/latest/download/tomte-macos-universal.tar.gz)
+
+The binaries are unsigned, so expect a warning on first launch (see
+[fair use](#a-note-on-games-and-fair-use) below): on Windows, SmartScreen →
+"More info" → "Run anyway"; on macOS, right-click → Open, or run
+`xattr -d com.apple.quarantine tomte`. If you'd rather not trust a prebuilt
+binary, build from source instead.
+
 ## Building from source
 
 ```bash

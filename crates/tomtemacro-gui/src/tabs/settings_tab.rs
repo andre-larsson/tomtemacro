@@ -1,7 +1,10 @@
-//! Settings tab: hotkey rebinding and anti-sleep.
+//! Settings tab: hotkey rebinding, anti-sleep, and the macro folder.
+
+use std::path::PathBuf;
 
 use eframe::egui;
 use tomtemacro_core::engine::SharedState;
+use tomtemacro_core::storage::MacroStore;
 
 use crate::hotkeys::{Hotkeys, KEY_CHOICES};
 use crate::settings::{AntiSleepSettings, HotkeySettings};
@@ -11,6 +14,9 @@ pub struct SettingsUi {
     /// Edited-but-not-applied hotkey names; None = mirror current settings.
     draft: Option<HotkeySettings>,
     pub notice: Option<String>,
+    /// Edited-but-not-applied macro folder; None = mirror current settings.
+    dir_draft: Option<String>,
+    dir_notice: Option<String>,
 }
 
 /// Push the anti-sleep config to the engine — takes effect on its next
@@ -23,14 +29,17 @@ pub fn apply_anti_sleep(shared: &SharedState, settings: &AntiSleepSettings) {
     );
 }
 
+/// Returns true when the macro folder changed and the store must be
+/// reopened by the caller.
 pub fn show(
     ui: &mut egui::Ui,
     state: &mut SettingsUi,
     current: &mut HotkeySettings,
     hotkeys: &mut Option<Hotkeys>,
     anti_sleep: &mut AntiSleepSettings,
+    macro_dir: &mut Option<PathBuf>,
     shared: &SharedState,
-) {
+) -> bool {
     ui.heading("Global hotkeys");
     ui.add_space(4.0);
 
@@ -141,5 +150,94 @@ pub fn show(
 
     ui.add_space(16.0);
     ui.separator();
+    ui.add_space(8.0);
+
+    let dir_changed = macro_folder_section(ui, state, macro_dir);
+
+    ui.add_space(16.0);
+    ui.separator();
     ui.weak("Clicker and playback settings are saved automatically on exit.");
+
+    dir_changed
+}
+
+/// The platform-default macro folder, if one can be determined.
+fn default_macro_dir() -> Option<PathBuf> {
+    MacroStore::open_default()
+        .ok()
+        .map(|s| s.dir().to_path_buf())
+}
+
+fn macro_folder_section(
+    ui: &mut egui::Ui,
+    state: &mut SettingsUi,
+    macro_dir: &mut Option<PathBuf>,
+) -> bool {
+    ui.heading("Macro folder");
+    ui.add_space(4.0);
+
+    let default_dir = default_macro_dir();
+    let effective = macro_dir
+        .clone()
+        .or_else(|| default_dir.clone())
+        .unwrap_or_default();
+    let draft = state
+        .dir_draft
+        .get_or_insert_with(|| effective.display().to_string());
+
+    ui.horizontal(|ui| {
+        ui.add(egui::TextEdit::singleline(draft).desired_width(360.0));
+        if ui
+            .button("Default")
+            .on_hover_text(match &default_dir {
+                Some(dir) => format!("reset to {}", dir.display()),
+                None => "no platform default available".into(),
+            })
+            .clicked()
+        {
+            if let Some(dir) = &default_dir {
+                *draft = dir.display().to_string();
+            }
+        }
+    });
+
+    let mut changed = false;
+    let draft_path = PathBuf::from(draft.trim());
+    let draft_differs = !draft.trim().is_empty() && draft_path != effective;
+    ui.horizontal(|ui| {
+        if ui
+            .add_enabled(draft_differs, egui::Button::new("Apply"))
+            .clicked()
+        {
+            match std::fs::create_dir_all(&draft_path) {
+                Ok(()) => {
+                    // Storing the default as None keeps the file portable
+                    // (and tracking the platform default if it ever moves).
+                    *macro_dir =
+                        (Some(&draft_path) != default_dir.as_ref()).then(|| draft_path.clone());
+                    crate::settings::save(&crate::settings::Settings {
+                        macro_dir: macro_dir.clone(),
+                        ..crate::settings::load()
+                    });
+                    state.dir_notice = Some(format!("macros now live in {}", draft_path.display()));
+                    changed = true;
+                }
+                Err(e) => {
+                    state.dir_notice = Some(format!("cannot use that folder: {e}"));
+                }
+            }
+        }
+        if draft_differs && ui.button("Revert").clicked() {
+            state.dir_draft = None;
+            state.dir_notice = None;
+        }
+    });
+    if let Some(notice) = &state.dir_notice {
+        ui.weak(notice);
+    }
+    ui.weak(
+        "Where recordings are saved and the library list looks for macros. \
+         Existing files are not moved — copy them over if you want them along.",
+    );
+    changed
 }

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!-- __VERSION__ is substituted from the git tag by the release workflow.
+     A stable CFBundleIdentifier also makes macOS remember the Accessibility
+     permission across updates instead of keying it to the binary path. -->
+<dict>
+	<key>CFBundleName</key>
+	<string>TomteMacro</string>
+	<key>CFBundleDisplayName</key>
+	<string>TomteMacro</string>
+	<key>CFBundleIdentifier</key>
+	<string>io.github.andre-larsson.tomtemacro</string>
+	<key>CFBundleExecutable</key>
+	<string>tomte</string>
+	<key>CFBundleIconFile</key>
+	<string>tomtemacro</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>__VERSION__</string>
+	<key>CFBundleVersion</key>
+	<string>__VERSION__</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>11.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+</dict>
+</plist>

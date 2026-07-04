@@ -55,11 +55,33 @@ jobs:
             target/x86_64-apple-darwin/release/tomte
           codesign --force -s - target/release/tomte
 
-      - name: Package (tar.gz)
-        if: runner.os != 'Windows'
+      - name: Package (tar.gz, Linux)
+        if: runner.os == 'Linux'
         run: |
           mkdir stage
           cp target/release/tomte LICENSE-MIT LICENSE-APACHE README.md stage/
+          cp assets/linux/tomtemacro.desktop stage/
+          cp assets/icon/png/tomtemacro-256.png stage/tomtemacro.png
+          tar -C stage -czf "${{ matrix.asset }}" .
+
+      # Ships a real .app bundle: the dock icon comes from the bundle's
+      # .icns (a bare binary can't set one), and a stable bundle id keeps
+      # the Accessibility permission grant across updates.
+      - name: Package (tar.gz, macOS .app)
+        if: runner.os == 'macOS'
+        run: |
+          APP="stage/TomteMacro.app"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp target/release/tomte "$APP/Contents/MacOS/tomte"
+          mkdir tomtemacro.iconset
+          for s in 16 32 128 256 512; do
+            cp "assets/icon/png/tomtemacro-$s.png" "tomtemacro.iconset/icon_${s}x${s}.png"
+            cp "assets/icon/png/tomtemacro-$((s * 2)).png" "tomtemacro.iconset/icon_${s}x${s}@2x.png"
+          done
+          iconutil -c icns tomtemacro.iconset -o "$APP/Contents/Resources/tomtemacro.icns"
+          sed "s/__VERSION__/${GITHUB_REF_NAME#v}/g" assets/macos/Info.plist > "$APP/Contents/Info.plist"
+          codesign --force -s - "$APP"
+          cp LICENSE-MIT LICENSE-APACHE README.md stage/
           tar -C stage -czf "${{ matrix.asset }}" .
 
       - name: Package (zip)

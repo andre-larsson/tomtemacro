@@ -24,7 +24,7 @@ use crossbeam_channel::{select, unbounded, Receiver, RecvTimeoutError, Sender};
 use crate::capture::CaptureEvent;
 use crate::clicker::{self, ClickerConfig};
 use crate::inject::{EnigoInjector, InjectError, Injector};
-use crate::model::{EventKind, MacroMeta, MouseButton};
+use crate::model::{EventKind, Key, MacroMeta, MouseButton};
 use crate::platform;
 use crate::player::{self, PlayOutcome, PlaybackOptions};
 use crate::recorder::{RecordConfig, Recorder};
@@ -80,6 +80,12 @@ pub struct SharedState {
     cursor_seen: AtomicBool,
     /// 0 = none yet; see `encode_button`.
     last_button: AtomicU32,
+    /// 0 = none yet; see `encode_key`.
+    last_key: AtomicU32,
+    /// What kind of press happened most recently: 0 = none, 1 = button,
+    /// 2 = key. Racing a writer can pair a fresh kind with the previous
+    /// press for one frame — fine for a live readout.
+    last_press_kind: AtomicU8,
     /// Anti-sleep jiggle interval in ms; 0 = disarmed.
     anti_sleep_ms: AtomicU64,
     /// When input was last observed, in ms since [`EPOCH`].
@@ -127,11 +133,32 @@ impl SharedState {
     pub fn note_button(&self, button: MouseButton) {
         self.last_button
             .store(encode_button(button), Ordering::Relaxed);
+        self.last_press_kind.store(1, Ordering::Relaxed);
     }
 
     /// Latest pressed mouse button, if any was observed yet.
     pub fn last_button(&self) -> Option<MouseButton> {
         decode_button(self.last_button.load(Ordering::Relaxed))
+    }
+
+    /// Record a keyboard key press (capture layer, any mode).
+    pub fn note_key(&self, key: Key) {
+        self.last_key.store(encode_key(key), Ordering::Relaxed);
+        self.last_press_kind.store(2, Ordering::Relaxed);
+    }
+
+    /// Latest pressed keyboard key, if any was observed yet.
+    pub fn last_key(&self) -> Option<Key> {
+        decode_key(self.last_key.load(Ordering::Relaxed))
+    }
+
+    /// The most recent press of either kind, for the status-bar readout.
+    pub fn last_press(&self) -> Option<LastPress> {
+        match self.last_press_kind.load(Ordering::Relaxed) {
+            1 => self.last_button().map(LastPress::Button),
+            2 => self.last_key().map(LastPress::Key),
+            _ => None,
+        }
     }
 
     /// Arm (`Some(interval)`) or disarm (`None`) the anti-sleep jiggle.
@@ -181,6 +208,40 @@ fn decode_button(encoded: u32) -> Option<MouseButton> {
     }
 }
 
+/// The most recent input press, for live telemetry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LastPress {
+    Button(MouseButton),
+    Key(Key),
+}
+
+/// 0 = none; 1.. = index into [`Key::ALL`]; the variants outside `ALL` get
+/// the tag bits below. Unknown codes at or above 2^30 can't round-trip and
+/// decode as `None` — real platform keycodes are nowhere near that.
+const KEY_FUNCTION: u32 = 0x4000_0000;
+const KEY_UNKNOWN: u32 = 0x8000_0000;
+
+fn encode_key(key: Key) -> u32 {
+    match key {
+        Key::Function => KEY_FUNCTION,
+        Key::Unknown(code) if code < KEY_FUNCTION => KEY_UNKNOWN | code,
+        Key::Unknown(_) => 0,
+        named => Key::ALL
+            .iter()
+            .position(|k| *k == named)
+            .map_or(0, |i| i as u32 + 1),
+    }
+}
+
+fn decode_key(encoded: u32) -> Option<Key> {
+    match encoded {
+        0 => None,
+        KEY_FUNCTION => Some(Key::Function),
+        code if code & KEY_UNKNOWN != 0 => Some(Key::Unknown(code & !KEY_UNKNOWN)),
+        index => Key::ALL.get(index as usize - 1).copied(),
+    }
+}
+
 #[derive(Debug)]
 pub enum Command {
     StartClicker(ClickerConfig),
@@ -198,8 +259,12 @@ pub enum Command {
 pub enum Status {
     ModeChanged(Mode),
     /// The recording that just stopped, with metadata stamped but no name
-    /// yet — the frontend names and saves it.
-    RecordingFinished(Box<Script>),
+    /// yet — the frontend names and saves it. `dropped_unknown` counts key
+    /// events discarded for carrying an unrecognized keycode.
+    RecordingFinished {
+        script: Box<Script>,
+        dropped_unknown: usize,
+    },
     Finished {
         mode: Mode,
         reason: FinishReason,
@@ -500,6 +565,7 @@ fn record_activity(
                                  // them — they arrived after the user asked to stop.
     while capture.try_recv().is_ok() {}
 
+    let dropped_unknown = recorder.dropped_unknown();
     let events = recorder.finish(stopped_at);
     let session = platform::detect_session();
     let screen = injector.main_display().ok().and_then(|(w, h)| {
@@ -519,7 +585,10 @@ fn record_activity(
         },
         body: script::from_events(&events),
     };
-    push(Status::RecordingFinished(Box::new(recorded)));
+    push(Status::RecordingFinished {
+        script: Box::new(recorded),
+        dropped_unknown,
+    });
     push(Status::Finished {
         mode: Mode::Recording,
         reason: FinishReason::Completed,
@@ -693,7 +762,10 @@ mod tests {
         std::thread::sleep(Duration::from_millis(50)); // let the engine drain
         engine.request_stop();
 
-        let Status::RecordingFinished(recorded) = recv_status(&engine) else {
+        let Status::RecordingFinished {
+            script: recorded, ..
+        } = recv_status(&engine)
+        else {
             panic!("expected RecordingFinished first");
         };
         let instrs: Vec<_> = recorded.body.iter().map(|s| &s.instr).collect();
@@ -897,6 +969,8 @@ mod tests {
         let shared = SharedState::default();
         assert_eq!(shared.cursor(), None);
         assert_eq!(shared.last_button(), None);
+        assert_eq!(shared.last_key(), None);
+        assert_eq!(shared.last_press(), None);
 
         shared.note_cursor(-1920, 300);
         assert_eq!(shared.cursor(), Some((-1920, 300)));
@@ -912,5 +986,35 @@ mod tests {
             shared.note_button(button);
             assert_eq!(shared.last_button(), Some(button));
         }
+    }
+
+    #[test]
+    fn every_key_round_trips_through_telemetry() {
+        let shared = SharedState::default();
+        for &key in Key::ALL {
+            shared.note_key(key);
+            assert_eq!(shared.last_key(), Some(key), "{key:?}");
+        }
+        for key in [Key::Function, Key::Unknown(0), Key::Unknown(215)] {
+            shared.note_key(key);
+            assert_eq!(shared.last_key(), Some(key), "{key:?}");
+        }
+    }
+
+    #[test]
+    fn last_press_tracks_the_most_recent_kind() {
+        let shared = SharedState::default();
+        shared.note_button(MouseButton::Left);
+        assert_eq!(
+            shared.last_press(),
+            Some(LastPress::Button(MouseButton::Left))
+        );
+        shared.note_key(Key::KeyA);
+        assert_eq!(shared.last_press(), Some(LastPress::Key(Key::KeyA)));
+        shared.note_button(MouseButton::Right);
+        assert_eq!(
+            shared.last_press(),
+            Some(LastPress::Button(MouseButton::Right))
+        );
     }
 }

@@ -86,7 +86,7 @@ impl Default for MacrosUi {
             playable: None,
             speed: 1.0,
             repeat_times: 1,
-            repeat_infinite: false,
+            repeat_infinite: true,
             show_find: false,
             find_pattern: String::new(),
             replace_with: String::new(),
@@ -222,7 +222,7 @@ impl MacrosUi {
 
     /// A finished recording lands in the editor: a fresh buffer if nothing
     /// is open, appended under a `# recorded …` marker otherwise.
-    pub fn append_recording(&mut self, recorded: Script) {
+    pub fn append_recording(&mut self, recorded: Script, dropped_unknown: usize) {
         let stats = recorded.stats();
         if self.selected.is_none() && self.buffer.trim().is_empty() {
             self.buffer = script::format(&recorded);
@@ -236,10 +236,18 @@ impl MacrosUi {
             self.buffer.push_str(&script::format_body(&recorded.body));
         }
         self.dirty = true;
-        self.notice = Some(format!(
+        let mut notice = format!(
             "recording added — {} instructions (🧹 Tidy removes extra mouse moves)",
             stats.instructions
-        ));
+        );
+        if dropped_unknown > 0 {
+            notice.push_str(&format!(
+                " · ⚠ {dropped_unknown} key event(s) with unrecognized codes were \
+                 dropped — this machine mangled some keystrokes (a phantom or \
+                 garbled key); the rest recorded fine"
+            ));
+        }
+        self.notice = Some(notice);
     }
 
     fn parse_current(&mut self) -> Result<Arc<Script>, ParseError> {
@@ -307,6 +315,21 @@ pub fn show(
         .resizable(true)
         .default_size(240.0)
         .show_collapsible(ui, show_cheatsheet, super::cheatsheet::show);
+
+    // The side panels only constrain the parent's *cursor*, and the next
+    // allocation wins the full width back — anything wide (notably the
+    // editor with long lines) would then lay out and paint straight across
+    // the cheat-sheet panel, which was drawn earlier this frame and thus
+    // ends up hidden underneath. Put the central content in a child `Ui`
+    // hard-bounded (and clipped) to the space the panels left.
+    let content_rect = ui.available_rect_before_wrap();
+    let mut content_ui = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(content_rect)
+            .layout(*ui.layout()),
+    );
+    content_ui.set_clip_rect(content_ui.clip_rect().intersect(content_rect));
+    let ui = &mut content_ui;
 
     toolbar(
         ui, state, engine, store, strip_keys, record_key, play_key, stop_key,
@@ -505,7 +528,10 @@ fn toolbar(
     ui.add_space(4.0);
     match engine.shared.mode() {
         Mode::Idle => {
-            ui.horizontal(|ui| {
+            // Wrapped: when the cheat sheet squeezes the middle column, the
+            // buttons flow onto a second row instead of overflowing (which
+            // would widen the Ui and push the editor under the panel).
+            ui.horizontal_wrapped(|ui| {
                 if ui
                     .button(format!("⏺ Record ({record_key})"))
                     .on_hover_text("recording appends to the open macro")
@@ -596,7 +622,7 @@ fn toolbar(
 }
 
 fn options_row(ui: &mut egui::Ui, state: &mut MacrosUi) {
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.label("Playback:");
         ui.add(
             egui::Slider::new(&mut state.speed, 0.25..=4.0)

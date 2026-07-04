@@ -1,6 +1,7 @@
 //! Turns a stream of captured events into a clean macro: throttles the
 //! mouse-move firehose, strips configured hotkey chords, trims the stop
-//! chord's tail, and converts capture times into relative delays.
+//! chord's tail, drops key events that arrived with an unrecognized
+//! (garbled/phantom) keycode, and converts capture times into relative delays.
 
 use std::time::{Duration, Instant};
 
@@ -37,6 +38,8 @@ pub struct Recorder {
     /// clicks land at the true final cursor position.
     pending_move: Option<(Instant, EventKind)>,
     last_move_kept: Option<Instant>,
+    /// Count of key events dropped for carrying an unrecognized keycode.
+    dropped_unknown: usize,
 }
 
 impl Recorder {
@@ -46,6 +49,7 @@ impl Recorder {
             events: Vec::new(),
             pending_move: None,
             last_move_kept: None,
+            dropped_unknown: 0,
         }
     }
 
@@ -56,6 +60,15 @@ impl Recorder {
             EventKind::KeyPress(k) | EventKind::KeyRelease(k)
                 if self.config.strip_keys.contains(&k) =>
             {
+                false
+            }
+            // Some machines flood the low-level keyboard hook with phantom key
+            // events carrying an unmapped/garbled keycode (surfaced as
+            // `Unknown`). They don't correspond to real keystrokes, so drop
+            // them rather than bake junk into the macro; `dropped_unknown`
+            // drives the GUI's "keys were mangled" notice.
+            EventKind::KeyPress(Key::Unknown(_)) | EventKind::KeyRelease(Key::Unknown(_)) => {
+                self.dropped_unknown += 1;
                 false
             }
             EventKind::MouseMove { .. } => {
@@ -86,6 +99,12 @@ impl Recorder {
                 true
             }
         }
+    }
+
+    /// How many key events were dropped for carrying an unrecognized keycode
+    /// (see `push`). Non-zero means this machine mangled some keystrokes.
+    pub fn dropped_unknown(&self) -> usize {
+        self.dropped_unknown
     }
 
     /// Finalize: trim the stop chord's tail and convert to relative delays.
@@ -178,6 +197,62 @@ mod tests {
         let events = rec.finish(ms(t0, 900));
         assert_eq!(events.len(), 4, "trailing ctrl press/release trimmed");
         assert!(matches!(events[3].kind, EventKind::ButtonRelease(_)));
+    }
+
+    #[test]
+    fn unknown_key_events_are_dropped() {
+        // Phantom key events with a garbled keycode are dropped, not recorded
+        // (matches how a healthy tool copes with a machine that mangles keys).
+        let mut rec = Recorder::new(RecordConfig::default());
+        let t0 = Instant::now();
+        assert!(!rec.push(ms(t0, 0), EventKind::KeyPress(Key::Unknown(215))));
+        assert!(rec.push(ms(t0, 10), EventKind::KeyPress(Key::KeyD)));
+        assert!(rec.push(ms(t0, 40), EventKind::KeyRelease(Key::KeyD)));
+        assert!(!rec.push(ms(t0, 50), EventKind::KeyRelease(Key::Unknown(215))));
+        assert_eq!(rec.dropped_unknown(), 2);
+        let kinds: Vec<_> = rec.finish(ms(t0, 1000)).iter().map(|e| e.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                EventKind::KeyPress(Key::KeyD),
+                EventKind::KeyRelease(Key::KeyD),
+            ]
+        );
+    }
+
+    #[test]
+    fn dropping_unknowns_keeps_real_keys_and_modifiers() {
+        // A real chord recorded alongside phantom presses: only the junk goes.
+        let mut rec = Recorder::new(RecordConfig::default());
+        let t0 = Instant::now();
+        rec.push(ms(t0, 0), EventKind::KeyPress(Key::ControlLeft));
+        rec.push(ms(t0, 10), EventKind::KeyPress(Key::Unknown(215)));
+        rec.push(ms(t0, 20), EventKind::KeyPress(Key::KeyD));
+        rec.push(ms(t0, 40), EventKind::KeyRelease(Key::KeyD));
+        rec.push(ms(t0, 90), EventKind::KeyRelease(Key::ControlLeft));
+        assert_eq!(rec.dropped_unknown(), 1);
+        let kinds: Vec<_> = rec.finish(ms(t0, 2000)).iter().map(|e| e.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                EventKind::KeyPress(Key::ControlLeft),
+                EventKind::KeyPress(Key::KeyD),
+                EventKind::KeyRelease(Key::KeyD),
+                EventKind::KeyRelease(Key::ControlLeft),
+            ]
+        );
+    }
+
+    #[test]
+    fn phantom_flood_is_fully_dropped() {
+        // A stuck phantom key auto-repeating at ~10 Hz: nothing survives.
+        let mut rec = Recorder::new(RecordConfig::default());
+        let t0 = Instant::now();
+        for i in 0..5 {
+            assert!(!rec.push(ms(t0, i * 90), EventKind::KeyPress(Key::Unknown(215))));
+        }
+        assert_eq!(rec.dropped_unknown(), 5);
+        assert!(rec.finish(ms(t0, 1000)).is_empty());
     }
 
     #[test]

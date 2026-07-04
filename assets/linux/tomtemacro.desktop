@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=TomteMacro
+GenericName=Auto Clicker & Macro Recorder
+Comment=The little gnome that clicks for you
+Exec=tomte
+Icon=tomtemacro
+Terminal=false
+Categories=Utility;
+Keywords=autoclicker;macro;automation;mouse;keyboard;

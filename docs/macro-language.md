@@ -72,6 +72,18 @@ Keys are **physical positions** (QWERTY reference), not characters: `press a`
 taps the key at the QWERTY "A" position whatever your layout. `type` is the
 character-oriented tool.
 
+**Keys go missing, or you get a "keys were mangled" warning?** Some
+machines feed the recorder phantom or garbled key events carrying an
+unrecognized keycode (`unknown-215` and the like) — a stuck/phantom key that
+auto-repeats, a flaky or composite USB device, an input method, or software
+sitting between the keyboard and the OS. The recorder **drops** those events
+so they don't pollute the macro, and the notice after recording tells you how
+many were dropped. The real keystrokes that still come through cleanly are
+recorded normally, but any keypress that was *fully* garbled is lost with no
+way to recover it. If letters are going missing, the fix is on the machine:
+unplug other input devices, disable the software in between, or record on a
+different machine, then re-record.
+
 ### Timing
 
 | Command | Meaning |

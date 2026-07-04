@@ -24,6 +24,9 @@ regex.workspace = true
 ron.workspace = true
 serde.workspace = true
 
+[target.'cfg(windows)'.build-dependencies]
+winresource.workspace = true
+
 [features]
 # Tray icon support lands in phase 7; feature exists so CI covers the flag.
 tray = []

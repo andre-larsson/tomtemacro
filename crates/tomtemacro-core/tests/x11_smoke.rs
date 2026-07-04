@@ -69,7 +69,7 @@ fn recording_finished(engine: &EngineHandle) -> Script {
             .checked_duration_since(std::time::Instant::now())
             .expect("timed out waiting for RecordingFinished");
         match engine.status.recv_timeout(remaining) {
-            Ok(Status::RecordingFinished(recorded)) => return *recorded,
+            Ok(Status::RecordingFinished { script, .. }) => return *script,
             Ok(_) => {}
             Err(e) => panic!("engine status channel: {e}"),
         }

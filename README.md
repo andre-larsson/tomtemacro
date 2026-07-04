@@ -1,6 +1,10 @@
-# TomteMacro 🍄
+<p align="center">
+  <img src="assets/readme/tomtemacro-banner.webp"
+       alt="TomteMacro — an ASCII-art tomte guiding a glowing cursor between record and replay panels"
+       width="820">
+</p>
 
-*The little gnome that clicks for you.*
+<p align="center"><em>The little gnome that clicks for you.</em></p>
 
 TomteMacro is a cross-platform auto-clicker and mouse/keyboard macro recorder,
 written in Rust. Like the tomte of Scandinavian folklore — the household gnome
@@ -44,7 +48,7 @@ clicking and typing so you don't have to.
 | macOS | ✅ Supported | Requires the **Accessibility** permission (System Settings → Privacy & Security → Accessibility) for both recording and playback. TomteMacro guides you through this on first launch. |
 | Linux (Wayland) | ❌ Not yet | Wayland by design blocks global input capture/injection. TomteMacro detects Wayland sessions and warns. An `evdev`/`uinput` backend is planned. |
 
-## Download
+## Download & install
 
 Prebuilt binaries for the latest release (these links always point at the
 newest version):
@@ -53,11 +57,46 @@ newest version):
 - [Windows x86_64](https://github.com/andre-larsson/tomtemacro/releases/latest/download/tomte-windows-x86_64.zip)
 - [macOS universal](https://github.com/andre-larsson/tomtemacro/releases/latest/download/tomte-macos-universal.tar.gz)
 
-The binaries are unsigned, so expect a warning on first launch (see
-[fair use](#a-note-on-games-and-fair-use) below): on Windows, SmartScreen →
-"More info" → "Run anyway"; on macOS, right-click → Open, or run
-`xattr -d com.apple.quarantine tomte`. If you'd rather not trust a prebuilt
-binary, build from source instead.
+The binaries are unsigned, so expect a one-time warning on first launch (see
+[fair use](#a-note-on-games-and-fair-use) below). If you'd rather not trust a
+prebuilt binary, build from source instead.
+
+### Linux
+
+```bash
+tar -xzf tomte-linux-x86_64.tar.gz
+./tomte
+```
+
+That's it — but if you want TomteMacro in your app launcher, the tarball also
+ships a `.desktop` file and icon (no root needed; `~/.local/bin` is on `PATH`
+on most distros):
+
+```bash
+install -Dm755 tomte ~/.local/bin/tomte
+install -Dm644 tomtemacro.desktop ~/.local/share/applications/tomtemacro.desktop
+install -Dm644 tomtemacro.png ~/.local/share/icons/hicolor/256x256/apps/tomtemacro.png
+```
+
+Remember to log into an **X11 session** — see the platform table above for
+the Wayland situation.
+
+### Windows
+
+Unzip and run `tomte.exe`. SmartScreen will object the first time:
+**More info → Run anyway**.
+
+### macOS
+
+The tarball contains `TomteMacro.app`. Drag it into `/Applications`, then
+**right-click → Open** the first time, or clear the quarantine flag:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/TomteMacro.app
+```
+
+On first launch TomteMacro walks you through granting the **Accessibility**
+permission it needs for recording and playback.
 
 ## Building from source
 

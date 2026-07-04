@@ -53,6 +53,7 @@ impl InputCapture for RdevCapture {
                             shared.note_cursor(x.round() as i32, y.round() as i32);
                         }
                         EventKind::ButtonPress(button) => shared.note_button(button),
+                        EventKind::KeyPress(key) => shared.note_key(key),
                         _ => {}
                     }
                     // The recording stream stays gated: our own injected

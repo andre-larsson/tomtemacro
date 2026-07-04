@@ -50,8 +50,8 @@ fn main() {
 
     loop {
         match engine.status.recv() {
-            Ok(Status::RecordingFinished(recorded)) => {
-                let mut recorded = *recorded;
+            Ok(Status::RecordingFinished { script, .. }) => {
+                let mut recorded = *script;
                 recorded.meta.name = std::path::Path::new(&out)
                     .file_stem()
                     .map(|s| s.to_string_lossy().into_owned())

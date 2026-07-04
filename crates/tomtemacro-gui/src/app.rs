@@ -30,6 +30,18 @@ enum Tab {
     Settings,
 }
 
+/// The macro library from settings: a custom folder if one is set, else the
+/// platform default location.
+fn open_store(settings: &Settings) -> (Option<MacroStore>, Option<String>) {
+    match &settings.macro_dir {
+        Some(dir) => (Some(MacroStore::at(dir.clone())), None),
+        None => match MacroStore::open_default() {
+            Ok(s) => (Some(s), None),
+            Err(e) => (None, Some(e.to_string())),
+        },
+    }
+}
+
 pub struct TomteApp {
     engine: EngineHandle,
     capture_errors: Receiver<CaptureError>,
@@ -60,10 +72,7 @@ impl TomteApp {
             Ok(h) => (Some(h), None),
             Err(e) => (None, Some(e)),
         };
-        let (store, store_error) = match MacroStore::open_default() {
-            Ok(s) => (Some(s), None),
-            Err(e) => (None, Some(e.to_string())),
-        };
+        let (store, store_error) = open_store(&settings);
 
         let mut macros = MacrosUi::from_settings(&settings.playback);
         macros.current_screen = EnigoInjector::new()
@@ -151,8 +160,11 @@ impl TomteApp {
 
         while let Ok(status) = self.engine.status.try_recv() {
             match status {
-                Status::RecordingFinished(recorded) => {
-                    self.macros.append_recording(*recorded);
+                Status::RecordingFinished {
+                    script,
+                    dropped_unknown,
+                } => {
+                    self.macros.append_recording(*script, dropped_unknown);
                     self.tab = Tab::Macros;
                 }
                 Status::Finished { mode, reason } => {
@@ -265,10 +277,15 @@ impl TomteApp {
                             Some((x, y)) => format!("{x}, {y}"),
                             None => "–".into(),
                         };
-                        match shared.last_button() {
-                            Some(button) => ui.weak(format!(
-                                "pos {pos} · last {}",
+                        use tomtemacro_core::engine::LastPress;
+                        match shared.last_press() {
+                            Some(LastPress::Button(button)) => ui.weak(format!(
+                                "pos {pos} · last {} click",
                                 tomtemacro_core::script::button_name(button)
+                            )),
+                            Some(LastPress::Key(key)) => ui.weak(format!(
+                                "pos {pos} · last {}",
+                                tomtemacro_core::script::key_name(key)
                             )),
                             None => ui.weak(format!("pos {pos}")),
                         };
@@ -352,14 +369,21 @@ impl eframe::App for TomteApp {
                     );
                 }
                 Tab::Settings => {
-                    crate::tabs::settings_tab::show(
+                    let dir_changed = crate::tabs::settings_tab::show(
                         ui,
                         &mut self.settings_ui,
                         &mut self.settings.hotkeys,
                         &mut self.hotkeys,
                         &mut self.settings.anti_sleep,
+                        &mut self.settings.macro_dir,
                         &self.engine.shared,
                     );
+                    if dir_changed {
+                        let (store, store_error) = open_store(&self.settings);
+                        self.store = store;
+                        self.store_error = store_error;
+                        self.macros.refresh();
+                    }
                     // A successful rebind clears an old registration failure.
                     if self.hotkeys.is_some() {
                         self.hotkey_error = None;

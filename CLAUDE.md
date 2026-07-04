@@ -30,6 +30,20 @@ TOMTE_FULL_SMOKE=1 xvfb-run -a cargo test --workspace -- --ignored
 cargo run -p tomtemacro-core --example record
 ```
 
+## Releasing
+
+Releases are built by `.github/workflows/release.yml`, triggered **only by pushing a `v*` tag** — merging to main does nothing release-wise. To ship:
+
+```bash
+# 1. Bump [workspace.package] version in the root Cargo.toml, refresh the lockfile
+cargo check --workspace
+# 2. Commit, push, tag the release commit, push the tag
+git push origin main
+git tag v0.X.Y && git push origin v0.X.Y
+```
+
+The workflow builds Linux (ubuntu-22.04 for a glibc 2.35 baseline), Windows, and a macOS universal binary, then publishes the GitHub release atomically once all three assets exist. Asset names are deliberately **versionless** (`tomte-linux-x86_64.tar.gz`, …) because external sites link to `releases/latest/download/<asset>` — never rename them.
+
 ## Architecture
 
 Two-crate workspace:

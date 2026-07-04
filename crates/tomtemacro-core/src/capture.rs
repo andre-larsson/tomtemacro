@@ -42,11 +42,24 @@ impl InputCapture for RdevCapture {
             .spawn(move || {
                 // Blocks forever on success; returns only on startup failure.
                 let result = rdev::listen(move |event| {
-                    // Fast path: one relaxed atomic load per OS input event.
+                    let kind = convert::rdev_to_core(&event.event_type);
+                    // Live telemetry runs in every mode (a couple of relaxed
+                    // stores per OS input event) — the status bar shows the
+                    // cursor and last button even while idle or playing.
+                    // Every event also feeds the anti-sleep idle clock.
+                    shared.note_input();
+                    match kind {
+                        EventKind::MouseMove { x, y } => {
+                            shared.note_cursor(x.round() as i32, y.round() as i32);
+                        }
+                        EventKind::ButtonPress(button) => shared.note_button(button),
+                        _ => {}
+                    }
+                    // The recording stream stays gated: our own injected
+                    // events (mode Playing/Clicking) can never enter it.
                     if shared.mode() != Mode::Recording {
                         return;
                     }
-                    let kind = convert::rdev_to_core(&event.event_type);
                     let _ = tx.send((Instant::now(), kind));
                 });
                 if let Err(e) = result {

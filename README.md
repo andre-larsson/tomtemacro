@@ -15,8 +15,21 @@ clicking and typing so you don't have to.
   offset), optional click-count limit.
 - **Macro recorder** — record global mouse & keyboard input with original
   timing, replay at any speed, loop N times or forever.
-- **Macro library** — macros saved as human-readable, hand-editable
-  [RON](https://github.com/ron-rs/ron) files you can rename, tweak, and share.
+- **Macro language & editor** — macros are plain-text scripts
+  (`click left`, `wait 100ms..300ms`, `repeat 10 … end`, `type "hello"`, …)
+  you can record, hand-write, and edit in the built-in editor, with regex
+  find & replace, an in-app cheat sheet, and a one-click tidy tool that
+  strips recorded mouse noise. See
+  [docs/macro-language.md](docs/macro-language.md) for the full reference.
+- **Macro library** — macros saved as human-readable, hand-editable `.tomte`
+  script files you can rename, tweak, and share (old `.ron` recordings keep
+  working and convert on save).
+- **Live input readout** — the status bar always shows the current mouse
+  position and the last pressed button.
+- **Anti-sleep** — optional keep-awake that nudges the mouse one pixel (and
+  straight back) after a configurable idle period, so the machine never
+  sleeps and presence apps stay "active". It only fires when you're actually
+  idle — never while you're moving the mouse, recording, or playing.
 - **Global hotkeys** — start/stop everything from anywhere
   (defaults: `F6` clicker, `F7` record, `F8` play, `F9` stop all).
 - **GUI** — a small [egui](https://github.com/emilk/egui) app; the engine runs

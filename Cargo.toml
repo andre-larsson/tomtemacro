@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/tomtemacro-core", "crates/tomtemacro-gui"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 authors = ["André Larsson <larsson.andre@gmail.com>"]
@@ -23,6 +23,7 @@ fastrand = "2"
 thiserror = "2"
 anyhow = "1"
 log = "0.4"
+regex = "1.12"
 env_logger = "0.11"
 eframe = "0.35"
 global-hotkey = "0.8"

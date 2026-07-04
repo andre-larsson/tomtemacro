@@ -1,7 +1,7 @@
 //! Phase-3 proof: record a macro from the CLI.
 //!
 //! ```text
-//! cargo run --example record -- out.ron
+//! cargo run --example record -- out.tomte
 //! ```
 //!
 //! Records global mouse + keyboard until you press Enter in this terminal,
@@ -16,12 +16,12 @@ use tomtemacro_core::engine::{Command, EngineHandle, Status};
 use tomtemacro_core::model::Key;
 use tomtemacro_core::platform;
 use tomtemacro_core::recorder::RecordConfig;
-use tomtemacro_core::storage;
+use tomtemacro_core::{script, storage};
 
 fn main() {
     env_logger::init();
     let out = std::env::args().nth(1).unwrap_or_else(|| {
-        eprintln!("usage: record <out.ron>");
+        eprintln!("usage: record <out.tomte>");
         std::process::exit(2);
     });
 
@@ -50,17 +50,19 @@ fn main() {
 
     loop {
         match engine.status.recv() {
-            Ok(Status::RecordingFinished(file)) => {
-                let mut file = *file;
-                file.meta.name = std::path::Path::new(&out)
+            Ok(Status::RecordingFinished(recorded)) => {
+                let mut recorded = *recorded;
+                recorded.meta.name = std::path::Path::new(&out)
                     .file_stem()
                     .map(|s| s.to_string_lossy().into_owned())
                     .unwrap_or_default();
-                let n = file.events.len();
-                let secs = file.duration_us() as f64 / 1e6;
-                storage::save(&file, std::path::Path::new(&out)).expect("write macro file");
+                let stats = recorded.stats();
+                storage::save_text(&script::format(&recorded), std::path::Path::new(&out))
+                    .expect("write macro file");
                 println!(
-                    "saved {n} events ({secs:.2} s, {} captured raw) to {out}",
+                    "saved {} instructions ({:.2} s, {} captured raw) to {out}",
+                    stats.instructions,
+                    stats.nominal_us as f64 / 1e6,
                     engine.shared.events_recorded.load(Ordering::Relaxed)
                 );
                 return;

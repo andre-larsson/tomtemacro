@@ -49,7 +49,8 @@ pub struct ClickerConfig {
 }
 
 /// Gap between the two presses of a double click (or key double-tap).
-const DOUBLE_CLICK_GAP: Duration = Duration::from_millis(30);
+/// Shared with script playback, which uses the same gap for `doubleclick`.
+pub(crate) const DOUBLE_CLICK_GAP: Duration = Duration::from_millis(30);
 /// Jitter never pushes an interval below this.
 const MIN_INTERVAL: Duration = Duration::from_micros(500);
 

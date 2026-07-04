@@ -1,4 +1,4 @@
+pub mod cheatsheet;
 pub mod clicker;
-pub mod library;
-pub mod recorder;
+pub mod macros;
 pub mod settings_tab;

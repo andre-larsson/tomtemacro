@@ -4,7 +4,7 @@
 use enigo::{Axis, Coordinate, Direction, Enigo, Keyboard, Mouse, Settings};
 
 use crate::convert::{button_to_enigo, key_to_inject, InjectKey};
-use crate::model::EventKind;
+use crate::model::{EventKind, Key};
 
 #[derive(Debug, thiserror::Error)]
 pub enum InjectError {
@@ -22,6 +22,29 @@ pub trait Injector {
     /// different screen layout can warn. Optional for mock backends.
     fn main_display(&mut self) -> Result<(i32, i32), InjectError> {
         Err(InjectError::Inject("display size unavailable".into()))
+    }
+    /// Type a string as keystrokes. The default expands each character to a
+    /// (shifted) physical-key tap via the QWERTY table, paced so slow
+    /// applications keep up; backends with native text input may override.
+    fn type_text(&mut self, text: &str) -> Result<(), InjectError> {
+        for c in text.chars() {
+            let Some((key, shift)) = crate::script::char_to_key(c) else {
+                log::warn!("skipping untypeable character {c:?}");
+                continue;
+            };
+            if shift {
+                self.inject(&EventKind::KeyPress(Key::ShiftLeft))?;
+            }
+            self.inject(&EventKind::KeyPress(key))?;
+            self.inject(&EventKind::KeyRelease(key))?;
+            if shift {
+                self.inject(&EventKind::KeyRelease(Key::ShiftLeft))?;
+            }
+            std::thread::sleep(std::time::Duration::from_micros(
+                crate::script::TYPE_CHAR_PACE_US,
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -98,6 +121,17 @@ impl Injector for EnigoInjector {
     fn main_display(&mut self) -> Result<(i32, i32), InjectError> {
         self.enigo
             .main_display()
+            .map_err(|e| InjectError::Inject(e.to_string()))
+    }
+
+    /// Native text input beats per-key expansion off Linux: the platform
+    /// backends there inject Unicode characters directly, and holding Shift
+    /// around such an event would not capitalize it. On Linux the trait
+    /// default keeps the raw-keycode physical-key semantics.
+    #[cfg(not(target_os = "linux"))]
+    fn type_text(&mut self, text: &str) -> Result<(), InjectError> {
+        self.enigo
+            .text(text)
             .map_err(|e| InjectError::Inject(e.to_string()))
     }
 }

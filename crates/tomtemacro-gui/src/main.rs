@@ -10,7 +10,8 @@ fn main() -> eframe::Result {
     env_logger::init();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([560.0, 480.0])
+            // Wide enough for the Macros tab's list + editor + cheat sheet.
+            .with_inner_size([780.0, 520.0])
             .with_min_inner_size([420.0, 360.0])
             .with_title("TomteMacro"),
         ..Default::default()

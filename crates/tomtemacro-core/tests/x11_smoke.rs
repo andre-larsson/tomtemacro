@@ -15,6 +15,7 @@ use tomtemacro_core::inject::{EnigoInjector, Injector};
 use tomtemacro_core::model::{EventKind, Key, MouseButton};
 use tomtemacro_core::player::{PlaybackOptions, Repeat};
 use tomtemacro_core::recorder::RecordConfig;
+use tomtemacro_core::script::{Instr, Script};
 
 /// These tests all drive the display's one cursor/keyboard, so they must not
 /// run concurrently (the default test runner uses threads). A failed test
@@ -61,18 +62,28 @@ fn wait_for_recording(engine: &EngineHandle) {
     }
 }
 
-fn recording_finished(engine: &EngineHandle) -> tomtemacro_core::model::MacroFile {
+fn recording_finished(engine: &EngineHandle) -> Script {
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     loop {
         let remaining = deadline
             .checked_duration_since(std::time::Instant::now())
             .expect("timed out waiting for RecordingFinished");
         match engine.status.recv_timeout(remaining) {
-            Ok(Status::RecordingFinished(file)) => return *file,
+            Ok(Status::RecordingFinished(recorded)) => return *recorded,
             Ok(_) => {}
             Err(e) => panic!("engine status channel: {e}"),
         }
     }
+}
+
+/// Executable instructions of a script body, waits/blanks skipped.
+fn significant(script: &Script) -> Vec<Instr> {
+    script
+        .body
+        .iter()
+        .map(|stmt| stmt.instr.clone())
+        .filter(|instr| !matches!(instr, Instr::Nop | Instr::Wait { .. }))
+        .collect()
 }
 
 /// Record real injected mouse moves through the actual rdev capture layer,
@@ -107,18 +118,17 @@ fn record_and_replay_mouse_moves() {
     if let Ok(err) = capture_errors.try_recv() {
         panic!("capture backend failed to start: {err}");
     }
-    let file = recording_finished(&engine);
-    let moves: Vec<(f64, f64)> = file
-        .events
-        .iter()
-        .filter_map(|e| match e.kind {
-            EventKind::MouseMove { x, y } => Some((x, y)),
+    let recorded = recording_finished(&engine);
+    let moves: Vec<(i32, i32)> = significant(&recorded)
+        .into_iter()
+        .filter_map(|instr| match instr {
+            Instr::Move { x, y } => Some((x, y)),
             _ => None,
         })
         .collect();
     for (x, y) in waypoints {
         assert!(
-            moves.contains(&(x, y)),
+            moves.contains(&(x as i32, y as i32)),
             "recorded moves {moves:?} missing waypoint ({x}, {y})"
         );
     }
@@ -128,7 +138,7 @@ fn record_and_replay_mouse_moves() {
         .inject(&EventKind::MouseMove { x: 50.0, y: 50.0 })
         .expect("park cursor");
     engine.send(Command::PlayMacro {
-        file: Arc::new(file),
+        script: Arc::new(recorded),
         options: PlaybackOptions {
             speed: 4.0,
             repeat: Repeat::Times(1),
@@ -185,7 +195,7 @@ fn full_event_kinds_round_trip() {
     wait_for_recording(&engine);
     std::thread::sleep(Duration::from_millis(100));
 
-    let script = [
+    let injected = [
         EventKind::MouseMove { x: 300.0, y: 300.0 },
         EventKind::ButtonPress(MouseButton::Left),
         EventKind::ButtonRelease(MouseButton::Left),
@@ -195,7 +205,7 @@ fn full_event_kinds_round_trip() {
         EventKind::KeyPress(Key::LeftBracket), // å on Swedish layouts
         EventKind::KeyRelease(Key::LeftBracket),
     ];
-    for kind in &script {
+    for kind in &injected {
         injector.inject(kind).expect("inject");
         std::thread::sleep(Duration::from_millis(30));
     }
@@ -204,16 +214,28 @@ fn full_event_kinds_round_trip() {
     if let Ok(err) = capture_errors.try_recv() {
         panic!("capture backend failed to start: {err}");
     }
-    let file = recording_finished(&engine);
-    let kinds: Vec<EventKind> = file.events.iter().map(|e| e.kind).collect();
+    let recorded = recording_finished(&engine);
+    let instrs = significant(&recorded);
 
-    // The exact injected sequence must appear in order (extra MouseMoves
-    // from the server are fine).
-    let mut it = kinds.iter();
-    for expected in &script {
+    // The adjacent press/release pairs collapse into taps, so the expected
+    // script is a click, a scroll, and two key taps after the move. Extra
+    // MouseMoves from the server are fine — match in order, with gaps.
+    let expected = [
+        Instr::Move { x: 300, y: 300 },
+        Instr::Click {
+            button: MouseButton::Left,
+            at: None,
+            double: false,
+        },
+        Instr::Scroll { dx: 0, dy: -1 },
+        Instr::KeyTap(Key::KeyE),
+        Instr::KeyTap(Key::LeftBracket),
+    ];
+    let mut it = instrs.iter();
+    for want in &expected {
         assert!(
-            it.any(|k| k == expected),
-            "captured stream missing {expected:?} in order; got {kinds:?}"
+            it.any(|instr| instr == want),
+            "recorded script missing {want:?} in order; got {instrs:?}"
         );
     }
 }

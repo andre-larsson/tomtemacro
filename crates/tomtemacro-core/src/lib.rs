@@ -11,5 +11,6 @@ pub mod model;
 pub mod platform;
 pub mod player;
 pub mod recorder;
+pub mod script;
 pub mod storage;
 pub mod timing;

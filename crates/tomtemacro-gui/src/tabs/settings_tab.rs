@@ -1,9 +1,10 @@
-//! Settings tab: hotkey rebinding.
+//! Settings tab: hotkey rebinding and anti-sleep.
 
 use eframe::egui;
+use tomtemacro_core::engine::SharedState;
 
 use crate::hotkeys::{Hotkeys, KEY_CHOICES};
-use crate::settings::HotkeySettings;
+use crate::settings::{AntiSleepSettings, HotkeySettings};
 
 #[derive(Default)]
 pub struct SettingsUi {
@@ -12,11 +13,23 @@ pub struct SettingsUi {
     pub notice: Option<String>,
 }
 
+/// Push the anti-sleep config to the engine — takes effect on its next
+/// idle tick, no apply step needed.
+pub fn apply_anti_sleep(shared: &SharedState, settings: &AntiSleepSettings) {
+    shared.set_anti_sleep(
+        settings
+            .enabled
+            .then(|| std::time::Duration::from_secs(u64::from(settings.interval_secs))),
+    );
+}
+
 pub fn show(
     ui: &mut egui::Ui,
     state: &mut SettingsUi,
     current: &mut HotkeySettings,
     hotkeys: &mut Option<Hotkeys>,
+    anti_sleep: &mut AntiSleepSettings,
+    shared: &SharedState,
 ) {
     ui.heading("Global hotkeys");
     ui.add_space(4.0);
@@ -94,6 +107,37 @@ pub fn show(
     if let Some(notice) = &state.notice {
         ui.weak(notice);
     }
+
+    ui.add_space(16.0);
+    ui.separator();
+    ui.add_space(8.0);
+
+    ui.heading("Anti-sleep");
+    ui.add_space(4.0);
+    let mut changed = ui
+        .checkbox(&mut anti_sleep.enabled, "Keep the system awake")
+        .changed();
+    ui.add_enabled_ui(anti_sleep.enabled, |ui| {
+        ui.horizontal(|ui| {
+            ui.label("after");
+            changed |= ui
+                .add(
+                    egui::DragValue::new(&mut anti_sleep.interval_secs)
+                        .range(5..=600)
+                        .suffix(" s"),
+                )
+                .changed();
+            ui.label("without input");
+        });
+    });
+    if changed {
+        apply_anti_sleep(shared, anti_sleep);
+    }
+    ui.weak(
+        "Nudges the mouse one pixel and straight back once you have been idle \
+         that long. It never fires while you are active, or while recording \
+         or playing — also toggled by the ☕ in the status bar.",
+    );
 
     ui.add_space(16.0);
     ui.separator();

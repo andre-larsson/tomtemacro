@@ -16,6 +16,9 @@ pub struct Settings {
     pub hotkeys: HotkeySettings,
     pub clicker: ClickerSettings,
     pub playback: PlaybackSettings,
+    pub anti_sleep: AntiSleepSettings,
+    /// Macro restored into the editor on the next start.
+    pub last_open_macro: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -49,6 +52,14 @@ pub struct PlaybackSettings {
     pub repeat_infinite: bool,
 }
 
+/// Keep-awake mouse jiggle: fires only after `interval_secs` without input.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AntiSleepSettings {
+    pub enabled: bool,
+    pub interval_secs: u32,
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -56,6 +67,17 @@ impl Default for Settings {
             hotkeys: HotkeySettings::default(),
             clicker: ClickerSettings::default(),
             playback: PlaybackSettings::default(),
+            anti_sleep: AntiSleepSettings::default(),
+            last_open_macro: None,
+        }
+    }
+}
+
+impl Default for AntiSleepSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_secs: 60,
         }
     }
 }

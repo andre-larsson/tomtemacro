@@ -1,7 +1,7 @@
 //! Phase-3 proof: replay a recorded macro from the CLI.
 //!
 //! ```text
-//! cargo run --example play -- file.ron [--speed 2.0] [--repeat N|inf]
+//! cargo run --example play -- file.tomte [--speed 2.0] [--repeat N|inf]
 //! ```
 //!
 //! Press Enter to stop early.
@@ -16,7 +16,7 @@ fn main() {
     env_logger::init();
     let mut args = std::env::args().skip(1);
     let Some(path) = args.next() else {
-        eprintln!("usage: play <file.ron> [--speed X] [--repeat N|inf]");
+        eprintln!("usage: play <file.tomte|file.ron> [--speed X] [--repeat N|inf]");
         std::process::exit(2);
     };
     let mut options = PlaybackOptions::default();
@@ -43,21 +43,22 @@ fn main() {
         }
     }
 
-    let file = storage::load(std::path::Path::new(&path)).unwrap_or_else(|e| {
+    let loaded = storage::load_script(std::path::Path::new(&path)).unwrap_or_else(|e| {
         eprintln!("{e}");
         std::process::exit(1);
     });
+    let stats = loaded.stats();
     println!(
-        "playing '{}' ({} events, {:.2} s at 1.0x) at {}x — Enter stops",
-        file.meta.name,
-        file.events.len(),
-        file.duration_us() as f64 / 1e6,
+        "playing '{}' ({} instructions, ≈{:.2} s at 1.0x) at {}x — Enter stops",
+        loaded.meta.name,
+        stats.instructions,
+        stats.nominal_us as f64 / 1e6,
         options.speed,
     );
 
     let engine = EngineHandle::spawn(None);
     engine.send(Command::PlayMacro {
-        file: Arc::new(file),
+        script: Arc::new(loaded),
         options,
     });
 

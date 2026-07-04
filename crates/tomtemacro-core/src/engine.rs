@@ -14,20 +14,21 @@
 //!   would be surprising (and is one half of the injected-events-triggering-
 //!   our-own-hotkeys defense; the recorder's chord-stripping is the other).
 
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, AtomicU8, Ordering};
+use std::sync::{Arc, LazyLock};
 use std::thread::JoinHandle;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use crossbeam_channel::{select, unbounded, Receiver, Sender};
+use crossbeam_channel::{select, unbounded, Receiver, RecvTimeoutError, Sender};
 
 use crate::capture::CaptureEvent;
 use crate::clicker::{self, ClickerConfig};
 use crate::inject::{EnigoInjector, InjectError, Injector};
-use crate::model::{MacroFile, MacroMeta};
+use crate::model::{EventKind, MacroMeta, MouseButton};
 use crate::platform;
 use crate::player::{self, PlayOutcome, PlaybackOptions};
 use crate::recorder::{RecordConfig, Recorder};
+use crate::script::{self, Script};
 use crate::storage;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,6 +51,18 @@ impl Mode {
     }
 }
 
+/// Time origin for the idle clock; forced at engine spawn, so the initial
+/// `last_input_ms` of 0 reads as "no input since startup".
+static EPOCH: LazyLock<Instant> = LazyLock::new(Instant::now);
+
+fn epoch_ms() -> u64 {
+    EPOCH.elapsed().as_millis() as u64
+}
+
+/// How often the idle engine wakes to check the anti-sleep deadline (and to
+/// notice config changes in the shared atomics).
+const ANTI_SLEEP_TICK: Duration = Duration::from_millis(250);
+
 /// Lock-free state shared between the engine, the GUI, and hotkey handlers.
 #[derive(Debug, Default)]
 pub struct SharedState {
@@ -60,6 +73,17 @@ pub struct SharedState {
     pub clicks_done: AtomicU64,
     pub events_recorded: AtomicU64,
     pub playback_iteration: AtomicU64,
+    // Live telemetry for the status-bar readout, fed by the capture layer
+    // on every OS input event regardless of mode.
+    cursor_x: AtomicI32,
+    cursor_y: AtomicI32,
+    cursor_seen: AtomicBool,
+    /// 0 = none yet; see `encode_button`.
+    last_button: AtomicU32,
+    /// Anti-sleep jiggle interval in ms; 0 = disarmed.
+    anti_sleep_ms: AtomicU64,
+    /// When input was last observed, in ms since [`EPOCH`].
+    last_input_ms: AtomicU64,
 }
 
 impl SharedState {
@@ -79,6 +103,82 @@ impl SharedState {
     pub fn stop_flag(&self) -> &AtomicBool {
         &self.stop
     }
+
+    /// Record the mouse position (capture layer; every move, any mode).
+    pub fn note_cursor(&self, x: i32, y: i32) {
+        self.cursor_x.store(x, Ordering::Relaxed);
+        self.cursor_y.store(y, Ordering::Relaxed);
+        self.cursor_seen.store(true, Ordering::Relaxed);
+    }
+
+    /// Latest observed mouse position, if any input arrived yet. The two
+    /// coordinates are separate atomics, so a reader racing a writer can see
+    /// a position one event stale on one axis — fine for a live readout.
+    pub fn cursor(&self) -> Option<(i32, i32)> {
+        self.cursor_seen.load(Ordering::Relaxed).then(|| {
+            (
+                self.cursor_x.load(Ordering::Relaxed),
+                self.cursor_y.load(Ordering::Relaxed),
+            )
+        })
+    }
+
+    /// Record a mouse-button press (capture layer, any mode).
+    pub fn note_button(&self, button: MouseButton) {
+        self.last_button
+            .store(encode_button(button), Ordering::Relaxed);
+    }
+
+    /// Latest pressed mouse button, if any was observed yet.
+    pub fn last_button(&self) -> Option<MouseButton> {
+        decode_button(self.last_button.load(Ordering::Relaxed))
+    }
+
+    /// Arm (`Some(interval)`) or disarm (`None`) the anti-sleep jiggle.
+    /// Takes effect on the engine's next idle tick — no command needed.
+    pub fn set_anti_sleep(&self, interval: Option<Duration>) {
+        let ms = interval.map_or(0, |d| (d.as_millis() as u64).max(1));
+        self.anti_sleep_ms.store(ms, Ordering::Relaxed);
+    }
+
+    pub fn anti_sleep(&self) -> Option<Duration> {
+        match self.anti_sleep_ms.load(Ordering::Relaxed) {
+            0 => None,
+            ms => Some(Duration::from_millis(ms)),
+        }
+    }
+
+    /// Stamp "input happened now" — fed by the capture layer for every OS
+    /// event in any mode, and by the anti-sleep jiggle itself so its cadence
+    /// holds even where capture can't observe our synthetic events.
+    pub fn note_input(&self) {
+        self.last_input_ms.store(epoch_ms(), Ordering::Relaxed);
+    }
+
+    /// Time since the last observed input (or since startup, if none yet).
+    pub fn idle_for(&self) -> Duration {
+        let last = self.last_input_ms.load(Ordering::Relaxed);
+        Duration::from_millis(epoch_ms().saturating_sub(last))
+    }
+}
+
+fn encode_button(button: MouseButton) -> u32 {
+    match button {
+        MouseButton::Left => 1,
+        MouseButton::Right => 2,
+        MouseButton::Middle => 3,
+        MouseButton::Other(code) => 0x100 + u32::from(code),
+    }
+}
+
+fn decode_button(encoded: u32) -> Option<MouseButton> {
+    match encoded {
+        0 => None,
+        1 => Some(MouseButton::Left),
+        2 => Some(MouseButton::Right),
+        3 => Some(MouseButton::Middle),
+        other => Some(MouseButton::Other((other - 0x100) as u8)),
+    }
 }
 
 #[derive(Debug)]
@@ -86,7 +186,7 @@ pub enum Command {
     StartClicker(ClickerConfig),
     StartRecording(RecordConfig),
     PlayMacro {
-        file: Arc<MacroFile>,
+        script: Arc<Script>,
         options: PlaybackOptions,
     },
     /// No-op if idle; otherwise equivalent to `SharedState::request_stop`.
@@ -99,7 +199,7 @@ pub enum Status {
     ModeChanged(Mode),
     /// The recording that just stopped, with metadata stamped but no name
     /// yet — the frontend names and saves it.
-    RecordingFinished(Box<MacroFile>),
+    RecordingFinished(Box<Script>),
     Finished {
         mode: Mode,
         reason: FinishReason,
@@ -149,6 +249,9 @@ impl EngineHandle {
         let (command_tx, command_rx) = unbounded();
         let (status_tx, status_rx) = unbounded();
         let (capture_tx, capture_rx) = unbounded();
+        // Pin the idle-clock origin to engine startup, so "no input observed
+        // yet" measures as idle-since-start.
+        LazyLock::force(&EPOCH);
         let shared = Arc::new(SharedState::default());
         let shared_for_thread = shared.clone();
         let thread = std::thread::Builder::new()
@@ -236,8 +339,21 @@ fn engine_main<F, I>(
         }
     };
 
-    // recv() erroring means all senders dropped — same as shutdown.
-    while let Ok(command) = commands.recv() {
+    let mut jiggle_warned = false;
+    loop {
+        // A timed wait instead of a blocking recv: the timeout is the idle
+        // tick that drives the anti-sleep jiggle (and notices the GUI arming
+        // it through the shared atomics). Activities keep the thread inside
+        // their own loops, so a jiggle can never interleave with one.
+        let command = match commands.recv_timeout(ANTI_SLEEP_TICK) {
+            Ok(command) => command,
+            Err(RecvTimeoutError::Timeout) => {
+                maybe_jiggle(&mut injector, &shared, &mut jiggle_warned);
+                continue;
+            }
+            // All senders dropped — same as shutdown.
+            Err(RecvTimeoutError::Disconnected) => break,
+        };
         match command {
             Command::Shutdown => break,
             Command::StopActivity => {} // already idle
@@ -263,12 +379,12 @@ fn engine_main<F, I>(
                     break; // shutdown arrived while we were busy
                 }
             }
-            Command::PlayMacro { file, options } => {
+            Command::PlayMacro { script, options } => {
                 run_activity(Mode::Playing, &shared, &push, |shared| {
                     shared.playback_iteration.store(0, Ordering::Relaxed);
-                    match player::run(
+                    match player::run_script(
                         &mut injector,
-                        &file,
+                        &script,
                         &options,
                         shared.stop_flag(),
                         &shared.playback_iteration,
@@ -297,8 +413,46 @@ fn engine_main<F, I>(
     shared.set_mode(Mode::Idle);
 }
 
+/// One idle tick of the anti-sleep feature: if armed and nothing (user or
+/// engine) produced input for the configured interval, nudge the cursor one
+/// pixel and put it straight back. The net displacement is zero and it only
+/// ever fires after real idleness, so it cannot fight the user's hand.
+fn maybe_jiggle(injector: &mut impl Injector, shared: &SharedState, warned: &mut bool) {
+    let Some(interval) = shared.anti_sleep() else {
+        return;
+    };
+    if shared.idle_for() < interval {
+        return;
+    }
+    let result = (|| {
+        let (x, y) = injector.cursor_location()?;
+        // Nudge toward the screen interior so an edge clamp can't swallow
+        // the move.
+        let dx = if x > 0 { -1 } else { 1 };
+        injector.inject(&EventKind::MouseMove {
+            x: f64::from(x + dx),
+            y: f64::from(y),
+        })?;
+        std::thread::sleep(Duration::from_millis(10));
+        injector.inject(&EventKind::MouseMove {
+            x: f64::from(x),
+            y: f64::from(y),
+        })
+    })();
+    match result {
+        // The jiggle counts as input: one nudge per interval, even where
+        // capture can't observe synthetic events (e.g. Wayland).
+        Ok(()) => shared.note_input(),
+        Err(e) if !*warned => {
+            log::warn!("anti-sleep jiggle failed (will keep trying): {e}");
+            *warned = true;
+        }
+        Err(_) => {}
+    }
+}
+
 /// Recording can't use `run_activity`: it multiplexes the capture stream
-/// with the command channel and produces a `MacroFile`. Returns true if a
+/// with the command channel and produces a `Script`. Returns true if a
 /// shutdown was requested mid-recording.
 fn record_activity(
     commands: &Receiver<Command>,
@@ -355,17 +509,17 @@ fn record_activity(
             scale: 1.0,
         })
     });
-    let file = MacroFile::new(
-        MacroMeta {
+    let recorded = Script {
+        meta: MacroMeta {
             name: String::new(),
             created_utc: storage::now_utc_rfc3339(),
             os: platform::os_label(session).to_string(),
             screen,
             notes: String::new(),
         },
-        events,
-    );
-    push(Status::RecordingFinished(Box::new(file)));
+        body: script::from_events(&events),
+    };
+    push(Status::RecordingFinished(Box::new(recorded)));
     push(Status::Finished {
         mode: Mode::Recording,
         reason: FinishReason::Completed,
@@ -529,22 +683,32 @@ mod tests {
         ));
 
         let t = std::time::Instant::now();
+        // Two presses without releases: stays keydown + wait in the script.
         tx.send((t, EventKind::KeyPress(Key::KeyA))).unwrap();
         tx.send((
             t + Duration::from_millis(30),
-            EventKind::KeyRelease(Key::KeyA),
+            EventKind::KeyPress(Key::KeyB),
         ))
         .unwrap();
         std::thread::sleep(Duration::from_millis(50)); // let the engine drain
         engine.request_stop();
 
-        let Status::RecordingFinished(file) = recv_status(&engine) else {
+        let Status::RecordingFinished(recorded) = recv_status(&engine) else {
             panic!("expected RecordingFinished first");
         };
-        assert_eq!(file.events.len(), 2);
-        assert_eq!(file.events[0].delay_us, 0);
-        assert_eq!(file.events[1].delay_us, 30_000);
-        assert!(!file.meta.created_utc.is_empty());
+        let instrs: Vec<_> = recorded.body.iter().map(|s| &s.instr).collect();
+        assert_eq!(
+            instrs,
+            vec![
+                &script::Instr::KeyDown(Key::KeyA),
+                &script::Instr::Wait {
+                    min_us: 30_000,
+                    max_us: 30_000
+                },
+                &script::Instr::KeyDown(Key::KeyB),
+            ]
+        );
+        assert!(!recorded.meta.created_utc.is_empty());
         assert!(matches!(
             recv_status(&engine),
             Status::Finished {
@@ -556,7 +720,6 @@ mod tests {
 
     #[test]
     fn playback_replays_macro_through_engine() {
-        use crate::model::{Key, MacroEvent, MacroMeta};
         use std::sync::Mutex;
 
         // An injector that counts events into a shared cell.
@@ -575,21 +738,10 @@ mod tests {
         let seen_for_engine = seen.clone();
         let engine = EngineHandle::spawn_with(move || Ok(CountingInjector(seen_for_engine)), None);
 
-        let file = Arc::new(MacroFile::new(
-            MacroMeta::default(),
-            vec![
-                MacroEvent {
-                    delay_us: 0,
-                    kind: EventKind::KeyPress(Key::KeyX),
-                },
-                MacroEvent {
-                    delay_us: 5_000,
-                    kind: EventKind::KeyRelease(Key::KeyX),
-                },
-            ],
-        ));
+        // A key tap injects press+release: 2 events per iteration.
+        let played = Arc::new(script::parse("press x\nwait 5ms\n").unwrap());
         engine.send(Command::PlayMacro {
-            file,
+            script: played,
             options: crate::player::PlaybackOptions {
                 speed: 1.0,
                 repeat: crate::player::Repeat::Times(3),
@@ -628,5 +780,137 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    /// Records every injected event; cursor parked at (100, 100).
+    struct SpyInjector(Arc<std::sync::Mutex<Vec<EventKind>>>);
+
+    impl Injector for SpyInjector {
+        fn inject(&mut self, kind: &EventKind) -> Result<(), InjectError> {
+            self.0.lock().unwrap().push(*kind);
+            Ok(())
+        }
+        fn cursor_location(&mut self) -> Result<(i32, i32), InjectError> {
+            Ok((100, 100))
+        }
+    }
+
+    fn spy_engine() -> (EngineHandle, Arc<std::sync::Mutex<Vec<EventKind>>>) {
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen_for_engine = seen.clone();
+        let engine = EngineHandle::spawn_with(move || Ok(SpyInjector(seen_for_engine)), None);
+        (engine, seen)
+    }
+
+    fn injected_moves(seen: &std::sync::Mutex<Vec<EventKind>>) -> Vec<(i32, i32)> {
+        seen.lock()
+            .unwrap()
+            .iter()
+            .filter_map(|kind| match kind {
+                EventKind::MouseMove { x, y } => Some((*x as i32, *y as i32)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn anti_sleep_jiggles_when_idle() {
+        let (engine, seen) = spy_engine();
+        engine
+            .shared
+            .set_anti_sleep(Some(Duration::from_millis(50)));
+
+        // Generous deadline for busy CI runners; exits as soon as one full
+        // nudge-and-return pair has landed.
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let moves = loop {
+            let moves = injected_moves(&seen);
+            if moves.len() >= 2 {
+                break moves;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "no jiggle within 10 s"
+            );
+            std::thread::sleep(Duration::from_millis(25));
+        };
+        assert_eq!(moves[0], (99, 100), "1 px toward the screen interior");
+        assert_eq!(moves[1], (100, 100), "and straight back");
+    }
+
+    #[test]
+    fn anti_sleep_holds_off_while_input_is_recent() {
+        let (engine, seen) = spy_engine();
+        engine.shared.set_anti_sleep(Some(Duration::from_secs(600)));
+        engine.shared.note_input();
+
+        // Several idle ticks pass, but the idle clock is nowhere near the
+        // interval — nothing may be injected.
+        std::thread::sleep(Duration::from_millis(700));
+        assert_eq!(injected_moves(&seen), Vec::<(i32, i32)>::new());
+    }
+
+    #[test]
+    fn anti_sleep_never_fires_during_an_activity() {
+        let (engine, seen) = spy_engine();
+        // Arm only once the clicker is confirmed running, so the tiny
+        // interval can't fire in an idle window before the activity starts.
+        engine.send(Command::StartClicker(config(None)));
+        assert!(matches!(
+            recv_status(&engine),
+            Status::ModeChanged(Mode::Clicking)
+        ));
+        engine
+            .shared
+            .set_anti_sleep(Some(Duration::from_millis(10)));
+
+        std::thread::sleep(Duration::from_millis(400));
+        engine.request_stop();
+        engine.shared.set_anti_sleep(None); // no post-stop jiggle either
+        assert!(matches!(recv_status(&engine), Status::Finished { .. }));
+
+        // The follow-cursor clicker injects only button events; the engine
+        // thread was inside the activity the whole time, so no mouse move
+        // (= no jiggle) may appear.
+        assert_eq!(injected_moves(&seen), Vec::<(i32, i32)>::new());
+        assert!(!seen.lock().unwrap().is_empty(), "clicker did click");
+    }
+
+    #[test]
+    fn anti_sleep_config_and_idle_clock_round_trip() {
+        let shared = SharedState::default();
+        assert_eq!(shared.anti_sleep(), None);
+        shared.set_anti_sleep(Some(Duration::from_secs(60)));
+        assert_eq!(shared.anti_sleep(), Some(Duration::from_secs(60)));
+        shared.set_anti_sleep(None);
+        assert_eq!(shared.anti_sleep(), None);
+
+        shared.note_input();
+        assert!(shared.idle_for() < Duration::from_secs(10));
+        std::thread::sleep(Duration::from_millis(30));
+        // Coarse bound — the clock has millisecond resolution.
+        assert!(shared.idle_for() >= Duration::from_millis(20));
+    }
+
+    #[test]
+    fn telemetry_starts_empty_and_round_trips() {
+        let shared = SharedState::default();
+        assert_eq!(shared.cursor(), None);
+        assert_eq!(shared.last_button(), None);
+
+        shared.note_cursor(-1920, 300);
+        assert_eq!(shared.cursor(), Some((-1920, 300)));
+
+        for button in [
+            MouseButton::Left,
+            MouseButton::Right,
+            MouseButton::Middle,
+            MouseButton::Other(0),
+            MouseButton::Other(8),
+            MouseButton::Other(255),
+        ] {
+            shared.note_button(button);
+            assert_eq!(shared.last_button(), Some(button));
+        }
     }
 }

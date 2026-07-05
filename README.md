@@ -1,10 +1,29 @@
-<p align="center">
-  <img src="assets/readme/tomtemacro-banner.webp"
-       alt="TomteMacro — an ASCII-art tomte guiding a glowing cursor between record and replay panels"
-       width="820">
-</p>
+```text
+#####  ###  #   # ##### ##### #   #  ###   #### ####   ###
+  #   #   # ## ##   #   #     ## ## #   # #     #   # #   #
+  #   #   # # # #   #   ####  # # # ##### #     ####  #   #
+  #   #   # #   #   #   #     #   # #   # #     #  #  #   #
+  #    ###  #   #   #   ##### #   # #   #  #### #   #  ###
 
-<p align="center"><em>The little gnome that clicks for you.</em></p>
+          /\
+         /##\
+        /####\        record  ==>  replay  ==>  refine
+       /######\
+      /########\      hotkeys : paths : timing : script
+     #==========#
+      | o    o |
+      |   /\   |
+      |  (__)  |
+   ___|        |___
+  /   \########/   \
+ /  ___\######/___  \
+'--'   |######|   '--'
+       |######|
+      _|######|_
+     #==========#
+```
+
+*The little gnome that clicks for you.*
 
 TomteMacro is a cross-platform auto-clicker and mouse/keyboard macro recorder,
 written in Rust. Like the tomte of Scandinavian folklore — the household gnome
@@ -24,7 +43,8 @@ clicking and typing so you don't have to.
   you can record, hand-write, and edit in the built-in editor, with regex
   find & replace, an in-app cheat sheet, and a one-click tidy tool that
   strips recorded mouse noise. See
-  [docs/macro-language.md](docs/macro-language.md) for the full reference.
+  [docs/macro-language.md](https://github.com/andre-larsson/tomtemacro/blob/main/docs/macro-language.md)
+  for the full reference.
 - **Macro library** — macros saved as human-readable, hand-editable `.tomte`
   script files you can rename, tweak, and share (old `.ron` recordings keep
   working and convert on save).

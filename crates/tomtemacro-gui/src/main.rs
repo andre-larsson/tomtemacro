@@ -5,6 +5,7 @@ mod banners;
 mod hotkeys;
 mod settings;
 mod tabs;
+mod theme;
 
 fn main() -> eframe::Result {
     env_logger::init();
@@ -17,8 +18,8 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             // Wide enough for the Macros tab's list + editor + cheat sheet.
-            .with_inner_size([780.0, 520.0])
-            .with_min_inner_size([420.0, 360.0])
+            .with_inner_size([840.0, 580.0])
+            .with_min_inner_size([460.0, 400.0])
             .with_title("TomteMacro")
             .with_icon(icon),
         ..Default::default()

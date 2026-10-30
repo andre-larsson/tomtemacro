@@ -8,6 +8,8 @@ use tomtemacro_core::engine::{EngineHandle, Mode};
 use tomtemacro_core::inject::{EnigoInjector, Injector};
 use tomtemacro_core::model::{Key, MouseButton};
 
+use crate::theme;
+
 pub struct ClickerUi {
     pub interval_ms: u64,
     pub target: ClickTarget,
@@ -21,6 +23,8 @@ pub struct ClickerUi {
     pub jitter_px: u16,
     pub limit_enabled: bool,
     pub limit: u64,
+    /// When an on-screen Start fires; see [`ClickerUi::needs_countdown`].
+    start_at: Option<Instant>,
 }
 
 impl Default for ClickerUi {
@@ -38,6 +42,7 @@ impl Default for ClickerUi {
             jitter_px: 3,
             limit_enabled: false,
             limit: 100,
+            start_at: None,
         }
     }
 }
@@ -70,6 +75,29 @@ impl ClickerUi {
         }
     }
 
+    /// The first click fires immediately, so starting from our own button
+    /// would click the Stop button that replaces it (or send key presses to
+    /// this window). The on-screen Start therefore counts down first, unless
+    /// clicks go to a fixed spot. The hotkey always starts straight away.
+    fn needs_countdown(&self) -> bool {
+        !(self.fixed_position && matches!(self.target, ClickTarget::Button(_)))
+    }
+
+    pub fn cancel_countdown(&mut self) {
+        self.start_at = None;
+    }
+
+    /// True once, when a countdown started from the button runs out.
+    pub fn countdown_due(&mut self) -> bool {
+        match self.start_at {
+            Some(at) if Instant::now() >= at => {
+                self.start_at = None;
+                true
+            }
+            _ => false,
+        }
+    }
+
     pub fn config(&self) -> ClickerConfig {
         ClickerConfig {
             interval: Duration::from_millis(self.interval_ms.max(1)),
@@ -97,134 +125,242 @@ impl ClickerUi {
 }
 
 pub fn show(ui: &mut egui::Ui, state: &mut ClickerUi, engine: &EngineHandle, hotkey: &str) {
-    ui.horizontal(|ui| {
-        ui.label("Press every");
-        ui.add(
-            egui::DragValue::new(&mut state.interval_ms)
-                .range(1..=3_600_000)
-                .suffix(" ms"),
-        );
-        ui.label("with");
-        egui::ComboBox::from_id_salt("target")
-            .selected_text(target_label(state.target))
-            .show_ui(ui, |ui| {
-                for b in [MouseButton::Left, MouseButton::Middle, MouseButton::Right] {
-                    let t = ClickTarget::Button(b);
-                    ui.selectable_value(&mut state.target, t, target_label(t));
-                }
-                ui.separator();
-                for &k in Key::ALL {
-                    ui.selectable_value(&mut state.target, ClickTarget::Key(k), key_label(k));
-                }
+    egui::ScrollArea::vertical()
+        .auto_shrink([false; 2])
+        .show(ui, |ui| {
+            theme::centered_column(ui, 560.0, |ui| {
+                ui.add_space(10.0);
+                // Settings only apply when clicking starts, so lock them meanwhile.
+                let idle = engine.shared.mode() == Mode::Idle;
+                ui.add_enabled_ui(idle, |ui| settings_card(ui, state));
+                ui.add_space(22.0);
+                start_stop(ui, state, engine, hotkey);
             });
-        let double_label = match state.target {
-            ClickTarget::Button(_) => "double-click",
-            ClickTarget::Key(_) => "double-tap",
-        };
-        ui.checkbox(&mut state.double, double_label);
-    });
-
-    ui.add_space(6.0);
-    ui.horizontal(|ui| {
-        ui.label("Position:");
-        ui.radio_value(&mut state.fixed_position, false, "follow cursor");
-        ui.radio_value(&mut state.fixed_position, true, "fixed");
-    });
-    if state.fixed_position {
-        ui.horizontal(|ui| {
-            ui.label("x");
-            ui.add(egui::DragValue::new(&mut state.x));
-            ui.label("y");
-            ui.add(egui::DragValue::new(&mut state.y));
-            match state.pick_deadline {
-                None => {
-                    if ui.button("Pick current position in 3 s").clicked() {
-                        state.pick_deadline = Some(Instant::now() + Duration::from_secs(3));
-                    }
-                }
-                Some(deadline) => {
-                    let left = deadline.saturating_duration_since(Instant::now());
-                    if left.is_zero() {
-                        if let Ok((x, y)) =
-                            EnigoInjector::new().and_then(|mut e| e.cursor_location())
-                        {
-                            state.x = x;
-                            state.y = y;
-                        }
-                        state.pick_deadline = None;
-                    } else {
-                        ui.label(format!(
-                            "move the cursor… {:.0} s",
-                            left.as_secs_f32().ceil()
-                        ));
-                    }
-                }
-            }
         });
-    }
+}
 
-    ui.add_space(6.0);
-    ui.checkbox(&mut state.jitter_enabled, "Humanized jitter");
-    if state.jitter_enabled {
-        ui.horizontal(|ui| {
-            ui.label("timing ±");
-            ui.add(
-                egui::Slider::new(&mut state.jitter_frac, 0.0..=0.5)
-                    .custom_formatter(|v, _| format!("{:.0} %", v * 100.0)),
-            );
-        });
-        ui.horizontal(|ui| {
-            ui.label("position ±");
-            ui.add(egui::Slider::new(&mut state.jitter_px, 0..=25).suffix(" px"));
-        });
-    }
-
-    let press_word = match state.target {
+/// "clicks" or "presses", depending on what the clicker drives.
+pub fn press_word(target: ClickTarget) -> &'static str {
+    match target {
         ClickTarget::Button(_) => "clicks",
         ClickTarget::Key(_) => "presses",
-    };
+    }
+}
 
-    ui.add_space(6.0);
-    ui.horizontal(|ui| {
-        ui.checkbox(&mut state.limit_enabled, "Stop after");
-        if state.limit_enabled {
-            ui.add(egui::DragValue::new(&mut state.limit).range(1..=u64::MAX));
-            ui.label(press_word);
-        }
+/// Left-column label, pinned to the top so it lines up with the first
+/// control when a row grows (fixed spot, humanize sliders).
+fn row_label(ui: &mut egui::Ui, text: &str) {
+    ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+        ui.add_space(4.0);
+        ui.add(egui::Label::new(egui::RichText::new(text).color(theme::palette(ui).weak)).extend());
     });
+}
 
-    ui.add_space(12.0);
-    match engine.shared.mode() {
-        Mode::Idle => {
-            if ui
-                .add_sized(
-                    [200.0, 32.0],
-                    egui::Button::new(format!("▶  Start  ({hotkey})")),
-                )
-                .clicked()
-            {
-                engine.toggle_clicker(state.config());
+fn settings_card(ui: &mut egui::Ui, state: &mut ClickerUi) {
+    let word = press_word(state.target);
+    theme::card(ui, |ui| {
+        egui::Grid::new("clicker-settings")
+            .num_columns(2)
+            .spacing([20.0, 14.0])
+            .show(ui, |ui| {
+                row_label(ui, "Press");
+                ui.horizontal(|ui| {
+                    egui::ComboBox::from_id_salt("target")
+                        .selected_text(target_label(state.target))
+                        .show_ui(ui, |ui| {
+                            for b in [MouseButton::Left, MouseButton::Middle, MouseButton::Right] {
+                                let t = ClickTarget::Button(b);
+                                ui.selectable_value(&mut state.target, t, target_label(t));
+                            }
+                            ui.separator();
+                            for &k in Key::ALL {
+                                ui.selectable_value(
+                                    &mut state.target,
+                                    ClickTarget::Key(k),
+                                    key_label(k),
+                                );
+                            }
+                        });
+                    theme::segmented(ui, &mut state.double, &[(false, "Once"), (true, "Twice")]);
+                });
+                ui.end_row();
+
+                row_label(ui, "Every");
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::DragValue::new(&mut state.interval_ms)
+                            .range(1..=3_600_000)
+                            .speed(5.0)
+                            .suffix(" ms"),
+                    )
+                    .on_hover_text("drag, or click to type");
+                    ui.weak(rate_hint(state.interval_ms, word));
+                });
+                ui.end_row();
+
+                row_label(ui, "Where");
+                ui.vertical(|ui| {
+                    theme::segmented(
+                        ui,
+                        &mut state.fixed_position,
+                        &[(false, "Wherever the cursor is"), (true, "A fixed spot")],
+                    );
+                    if state.fixed_position {
+                        fixed_spot_row(ui, state);
+                    }
+                });
+                ui.end_row();
+
+                row_label(ui, "Until");
+                ui.horizontal(|ui| {
+                    theme::segmented(
+                        ui,
+                        &mut state.limit_enabled,
+                        &[(false, "I stop it"), (true, "A set number")],
+                    );
+                    if state.limit_enabled {
+                        ui.add(egui::DragValue::new(&mut state.limit).range(1..=u64::MAX));
+                        ui.label(word);
+                    }
+                });
+                ui.end_row();
+
+                row_label(ui, "Feel");
+                ui.vertical(|ui| {
+                    ui.checkbox(&mut state.jitter_enabled, "Humanize")
+                        .on_hover_text(
+                            "vary the timing and position a little, like a person would",
+                        );
+                    if state.jitter_enabled {
+                        ui.horizontal(|ui| {
+                            ui.weak("timing ±");
+                            ui.add(
+                                egui::Slider::new(&mut state.jitter_frac, 0.0..=0.5)
+                                    .custom_formatter(|v, _| format!("{:.0} %", v * 100.0)),
+                            );
+                        });
+                        ui.horizontal(|ui| {
+                            ui.weak("position ±");
+                            ui.add(egui::Slider::new(&mut state.jitter_px, 0..=25).suffix(" px"));
+                        });
+                    }
+                });
+                ui.end_row();
+            });
+    });
+}
+
+fn fixed_spot_row(ui: &mut egui::Ui, state: &mut ClickerUi) {
+    ui.horizontal(|ui| {
+        ui.weak("x");
+        ui.add(egui::DragValue::new(&mut state.x));
+        ui.weak("y");
+        ui.add(egui::DragValue::new(&mut state.y));
+        match state.pick_deadline {
+            None => {
+                if ui
+                    .button("🎯 Pick")
+                    .on_hover_text("then point at the spot — it is grabbed after 3 seconds")
+                    .clicked()
+                {
+                    state.pick_deadline = Some(Instant::now() + Duration::from_secs(3));
+                }
+            }
+            Some(deadline) => {
+                let left = deadline.saturating_duration_since(Instant::now());
+                if left.is_zero() {
+                    if let Ok((x, y)) = EnigoInjector::new().and_then(|mut e| e.cursor_location()) {
+                        state.x = x;
+                        state.y = y;
+                    }
+                    state.pick_deadline = None;
+                } else {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "point at the spot… {:.0}",
+                            left.as_secs_f32().ceil()
+                        ))
+                        .color(theme::palette(ui).accent_text),
+                    );
+                }
             }
         }
+    });
+}
+
+/// The interval as a rate people can picture: "≈ 10 clicks per second".
+fn rate_hint(interval_ms: u64, word: &str) -> String {
+    let trim = |v: f64| {
+        let s = format!("{v:.1}");
+        s.strip_suffix(".0").map(str::to_owned).unwrap_or(s)
+    };
+    if interval_ms < 1000 {
+        let per_second = 1000.0 / interval_ms.max(1) as f64;
+        format!("≈ {} {word} per second", trim(per_second))
+    } else {
+        format!("once every {} s", trim(interval_ms as f64 / 1000.0))
+    }
+}
+
+fn start_stop(ui: &mut egui::Ui, state: &mut ClickerUi, engine: &EngineHandle, hotkey: &str) {
+    let p = theme::palette(ui);
+    let size = egui::vec2(260.0, 50.0);
+    ui.vertical_centered(|ui| match engine.shared.mode() {
+        Mode::Idle => match state.start_at {
+            None => {
+                if ui
+                    .add(theme::primary_button("▶   Start clicking", p.green).min_size(size))
+                    .clicked()
+                {
+                    if state.needs_countdown() {
+                        state.start_at = Some(Instant::now() + Duration::from_secs(3));
+                    } else {
+                        engine.toggle_clicker(state.config());
+                    }
+                }
+                theme::hotkey_hint(ui, "or press", hotkey, "anywhere — the same key stops it");
+            }
+            Some(at) => {
+                let left = at.saturating_duration_since(Instant::now()).as_secs_f32();
+                let label = format!("Starting in {:.0}…", left.ceil().max(1.0));
+                if ui
+                    .add(theme::primary_button(label, p.green.gamma_multiply(0.75)).min_size(size))
+                    .on_hover_text("click to cancel")
+                    .clicked()
+                {
+                    state.cancel_countdown();
+                }
+                ui.weak(match state.target {
+                    ClickTarget::Button(_) => "Point at what you want clicked.",
+                    ClickTarget::Key(_) => "Switch to the window that should get the key presses.",
+                });
+            }
+        },
         Mode::Clicking => {
-            let clicks = engine
+            let done = engine
                 .shared
                 .clicks_done
                 .load(std::sync::atomic::Ordering::Relaxed);
+            let word = press_word(state.target);
             if ui
-                .add_sized(
-                    [200.0, 32.0],
-                    egui::Button::new(format!("⏹  Stop — {clicks} {press_word}  ({hotkey})")),
+                .add(
+                    theme::primary_button(format!("⏹   Stop  ·  {done} {word}"), p.red)
+                        .min_size(size),
                 )
                 .clicked()
             {
                 engine.request_stop();
             }
+            theme::hotkey_hint(ui, "or press", hotkey, "anywhere");
         }
-        other => {
-            ui.add_enabled(false, egui::Button::new(format!("engine busy: {other:?}")));
+        _ => {
+            ui.add_enabled(
+                false,
+                theme::primary_button("▶   Start clicking", p.green).min_size(size),
+            );
+            ui.weak("Finish the recording or playback first.");
         }
-    }
+    });
 }
 
 fn button_name(button: MouseButton) -> &'static str {
@@ -237,10 +373,16 @@ fn button_name(button: MouseButton) -> &'static str {
 }
 
 fn target_label(target: ClickTarget) -> String {
-    match target {
+    let label = match target {
         ClickTarget::Button(b) => format!("{} click", button_name(b)),
         ClickTarget::Key(k) => format!("{} key", key_label(k)),
-    }
+    };
+    // Sentence case: "Left click", "Page down key".
+    let mut chars = label.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
 }
 
 /// Human name for a physical key, derived from the variant name:

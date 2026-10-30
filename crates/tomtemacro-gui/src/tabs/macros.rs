@@ -15,6 +15,7 @@ use tomtemacro_core::script::{self, ParseError, Script};
 use tomtemacro_core::storage::{self, MacroStore, SCRIPT_EXT};
 
 use crate::settings::PlaybackSettings;
+use crate::theme;
 
 /// Widget id of the editor, needed to drive its selection from find-next.
 const EDITOR_ID: &str = "macro-editor";
@@ -166,7 +167,7 @@ impl MacrosUi {
                     }
                 }
             }
-            Err(e) => self.notice = Some(format!("could not list macros: {e}")),
+            Err(e) => self.notice = Some(format!("Could not list macros: {e}")),
         }
         self.loaded = true;
     }
@@ -190,7 +191,7 @@ impl MacrosUi {
                 true
             }
             Err(e) => {
-                self.notice = Some(format!("could not open: {e}"));
+                self.notice = Some(format!("Could not open: {e}"));
                 false
             }
         }
@@ -237,7 +238,7 @@ impl MacrosUi {
         }
         self.dirty = true;
         let mut notice = format!(
-            "recording added — {} instructions (🧹 Tidy removes extra mouse moves)",
+            "Recording added — {} steps. ✨ Tidy strips the extra mouse moves.",
             stats.instructions
         );
         if dropped_unknown > 0 {
@@ -305,15 +306,31 @@ pub fn show(
 
     unsaved_dialog(ui, state, store);
 
+    let p = theme::palette(ui);
+    let side_card = egui::Frame::new()
+        .fill(p.card)
+        .stroke(egui::Stroke::new(1.0, p.border))
+        .corner_radius(12)
+        .inner_margin(egui::Margin::same(10));
     egui::Panel::left(egui::Id::new("macro-list"))
         .resizable(true)
-        .default_size(180.0)
+        .default_size(220.0)
+        .show_separator_line(false)
+        .frame(side_card.outer_margin(egui::Margin {
+            right: 12,
+            ..Default::default()
+        }))
         .show(ui, |ui| list_ui(ui, state, engine, store));
 
     let show_cheatsheet = &mut state.show_cheatsheet;
     egui::Panel::right(egui::Id::new("cheatsheet"))
         .resizable(true)
-        .default_size(240.0)
+        .default_size(250.0)
+        .show_separator_line(false)
+        .frame(side_card.outer_margin(egui::Margin {
+            left: 12,
+            ..Default::default()
+        }))
         .show_collapsible(ui, show_cheatsheet, super::cheatsheet::show);
 
     // The side panels only constrain the parent's *cursor*, and the next
@@ -334,16 +351,84 @@ pub fn show(
     toolbar(
         ui, state, engine, store, strip_keys, record_key, play_key, stop_key,
     );
-    options_row(ui, state);
+    ui.add_enabled_ui(engine.shared.mode() == Mode::Idle, |ui| {
+        options_row(ui, state);
+    });
     if state.show_find {
         find_bar(ui, state);
     }
-    status_line(ui, state);
+    if state.selected.is_none() {
+        ui.horizontal(|ui| {
+            ui.weak("Name");
+            ui.add(egui::TextEdit::singleline(&mut state.untitled_name).desired_width(180.0));
+            ui.weak("not saved yet");
+        });
+    }
+    let has_steps = matches!(state.parse_current(), Ok(s) if s.stats().instructions > 0);
+    match engine.shared.mode() {
+        _ if has_steps => status_line(ui, state),
+        Mode::Idle => {
+            welcome_card(ui, record_key);
+            ui.add_space(4.0);
+        }
+        Mode::Recording => {
+            ui.weak("Go ahead — your steps land in the editor when you stop.");
+        }
+        _ => {}
+    }
     if let Some(notice) = state.notice.clone() {
         ui.weak(notice);
     }
     ui.add_space(2.0);
     editor(ui, state);
+}
+
+/// First-run guidance shown while the editor holds no runnable steps.
+fn welcome_card(ui: &mut egui::Ui, record_key: &str) {
+    let p = theme::palette(ui);
+    theme::card(ui, |ui| {
+        ui.label(
+            egui::RichText::new("Record your first macro")
+                .size(17.0)
+                .color(p.text),
+        );
+        ui.add_space(2.0);
+        let anywhere = if record_key.is_empty() {
+            String::new()
+        } else {
+            format!(" — or {record_key} from any app")
+        };
+        step(ui, 1, &format!("Press ⏺ Record{anywhere}."));
+        step(ui, 2, "Do the clicks and typing you want repeated.");
+        step(
+            ui,
+            3,
+            "Stop the recording. Your steps appear below as a script you can edit.",
+        );
+        ui.add_space(2.0);
+        ui.weak(
+            "Then press ▶ Play. Rather write it yourself? Type commands below — \
+             📖 Cheat sheet lists them all.",
+        );
+    });
+}
+
+/// A numbered step: the number in a soft red circle, then the text.
+fn step(ui: &mut egui::Ui, n: u32, text: &str) {
+    let p = theme::palette(ui);
+    ui.horizontal(|ui| {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::hover());
+        ui.painter()
+            .circle_filled(rect.center(), 11.0, p.accent_soft);
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            n.to_string(),
+            egui::FontId::proportional(13.0),
+            p.accent_text,
+        );
+        ui.label(text);
+    });
 }
 
 // --- left panel: the library list ---
@@ -354,31 +439,46 @@ fn list_ui(
     engine: &EngineHandle,
     store: Option<&MacroStore>,
 ) {
-    ui.add_space(4.0);
+    let p = theme::palette(ui);
     ui.horizontal(|ui| {
-        ui.strong("Macros");
-        if ui.small_button("⟳").on_hover_text("refresh").clicked() {
-            state.refresh();
-        }
+        ui.label(egui::RichText::new("Your macros").size(15.5).color(p.text));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
             if let Some(store) = store {
-                if ui.small_button("📂").on_hover_text("open folder").clicked() {
+                if ui
+                    .add(egui::Button::new("📂").frame_when_inactive(false))
+                    .on_hover_text("Open the macro folder")
+                    .clicked()
+                {
                     reveal_dir(store.dir());
                 }
             }
+            if ui
+                .add(egui::Button::new("⟳").frame_when_inactive(false))
+                .on_hover_text("Refresh the list")
+                .clicked()
+            {
+                state.refresh();
+            }
         });
     });
-    if ui.button("＋ new macro").clicked() {
+    if ui
+        .add_sized(
+            [ui.available_width(), 30.0],
+            egui::Button::new("+  New macro"),
+        )
+        .clicked()
+    {
         state.request_new();
     }
     ui.add_space(4.0);
 
     let Some(store) = store else {
-        ui.weak("macro library unavailable — see the warning above");
+        ui.weak("The macro library is unavailable — see the warning above.");
         return;
     };
     if state.entries.is_empty() {
-        ui.weak("nothing here yet — hit Record or start typing");
+        ui.weak("No macros yet. Record one, or start typing in the editor.");
         return;
     }
 
@@ -391,14 +491,18 @@ fn list_ui(
     egui::ScrollArea::vertical()
         .auto_shrink([false; 2])
         .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 2.0;
             for (i, entry) in state.entries.iter().enumerate() {
                 ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    // Rename/delete stay out of sight until the row is pointed at.
+                    let hovered = ui.rect_contains_pointer(ui.max_rect());
                     if let Some(err) = &entry.load_error {
-                        ui.colored_label(ui.visuals().error_fg_color, "✖");
+                        ui.colored_label(p.error, "✖");
                         ui.label(&entry.name).on_hover_text(err);
                         if ui
-                            .small_button("🗑")
-                            .on_hover_text("delete broken file")
+                            .add(egui::Button::new("🗑").frame_when_inactive(false))
+                            .on_hover_text("Delete the broken file")
                             .clicked()
                         {
                             do_delete = Some(i);
@@ -407,15 +511,23 @@ fn list_ui(
                     }
 
                     if ui
-                        .add_enabled(idle, egui::Button::new("▶").small())
-                        .on_hover_text("play this macro")
+                        .add_enabled(
+                            idle,
+                            egui::Button::new(egui::RichText::new("▶").color(p.green))
+                                .small()
+                                .frame_when_inactive(false),
+                        )
+                        .on_hover_text("Play this macro")
                         .clicked()
                     {
                         do_play = Some(entry.path.clone());
                     }
 
                     if state.renaming == Some(i) {
-                        let response = ui.text_edit_singleline(&mut state.rename_field);
+                        let response = ui.add(
+                            egui::TextEdit::singleline(&mut state.rename_field)
+                                .desired_width(ui.available_width() - 64.0),
+                        );
                         let commit = response.lost_focus()
                             && ui.input(|inp| inp.key_pressed(egui::Key::Enter));
                         if ui.small_button("✔").clicked() || commit {
@@ -428,37 +540,61 @@ fn list_ui(
                     }
 
                     let is_open = state.selected.as_deref() == Some(entry.path.as_path());
-                    if ui.selectable_label(is_open, &entry.name).clicked() && !is_open {
-                        do_open = Some(entry.path.clone());
-                    }
-                    if entry.legacy_ron {
-                        ui.weak("ron").on_hover_text(
-                            "old format — opening shows the converted script; \
-                             saving converts the file to .tomte",
-                        );
-                    }
-                    if let (Some((sw, sh)), Some((w, h))) = (entry.screen, state.current_screen) {
-                        if (sw, sh) != (w, h) {
-                            ui.colored_label(ui.visuals().warn_fg_color, "⚠")
-                                .on_hover_text(format!(
-                                    "recorded on a {sw}×{sh} screen, this one is {w}×{h} — \
+                    let confirming = state.confirm_delete == Some(i);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if hovered || confirming {
+                            if confirming {
+                                if ui
+                                    .add(egui::Button::new(
+                                        egui::RichText::new("Delete?").color(p.error),
+                                    ))
+                                    .clicked()
+                                {
+                                    do_delete = Some(i);
+                                }
+                            } else if ui
+                                .add(egui::Button::new("🗑").small().frame_when_inactive(false))
+                                .on_hover_text("Delete")
+                                .clicked()
+                            {
+                                state.confirm_delete = Some(i);
+                            }
+                            if ui
+                                .add(egui::Button::new("✏").small().frame_when_inactive(false))
+                                .on_hover_text("Rename")
+                                .clicked()
+                            {
+                                state.renaming = Some(i);
+                                state.rename_field = entry.name.clone();
+                            }
+                        }
+                        if let (Some((sw, sh)), Some((w, h))) = (entry.screen, state.current_screen)
+                        {
+                            if (sw, sh) != (w, h) {
+                                ui.colored_label(p.warn, "⚠").on_hover_text(format!(
+                                    "Recorded on a {sw}×{sh} screen, this one is {w}×{h} — \
                                      absolute positions may be off"
                                 ));
-                        }
-                    }
-
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if state.confirm_delete == Some(i) {
-                            if ui.small_button("really?").clicked() {
-                                do_delete = Some(i);
                             }
-                        } else if ui.small_button("🗑").clicked() {
-                            state.confirm_delete = Some(i);
                         }
-                        if ui.small_button("✏").on_hover_text("rename").clicked() {
-                            state.renaming = Some(i);
-                            state.rename_field = entry.name.clone();
+                        if entry.legacy_ron {
+                            ui.weak("ron").on_hover_text(
+                                "Old format — opening shows the converted script; \
+                                 saving converts the file to .tomte",
+                            );
                         }
+                        ui.with_layout(
+                            egui::Layout::left_to_right(egui::Align::Center)
+                                .with_main_align(egui::Align::Min)
+                                .with_main_justify(true),
+                            |ui| {
+                                let name = egui::Button::selectable(is_open, entry.name.as_str())
+                                    .truncate();
+                                if ui.add(name).clicked() && !is_open {
+                                    do_open = Some(entry.path.clone());
+                                }
+                            },
+                        );
                     });
                 });
             }
@@ -477,7 +613,7 @@ fn list_ui(
                     options: state.playback_options(),
                 });
             }
-            Err(e) => state.notice = Some(format!("could not play: {e}")),
+            Err(e) => state.notice = Some(format!("Could not play: {e}")),
         }
     }
     if let Some((i, new_name)) = do_rename {
@@ -489,9 +625,9 @@ fn list_ui(
                         // Re-open so the buffer picks up the new name directive.
                         state.open_path(&new_path);
                     }
-                    state.notice = Some(format!("renamed to “{new_name}”"));
+                    state.notice = Some(format!("Renamed to “{new_name}”"));
                 }
-                Err(e) => state.notice = Some(format!("rename failed: {e}")),
+                Err(e) => state.notice = Some(format!("Rename failed: {e}")),
             }
         }
         state.refresh();
@@ -503,9 +639,9 @@ fn list_ui(
                 if state.selected.as_deref() == Some(path.as_path()) {
                     state.new_buffer();
                 }
-                state.notice = Some("deleted".into());
+                state.notice = Some("Deleted".into());
             }
-            Err(e) => state.notice = Some(format!("delete failed: {e}")),
+            Err(e) => state.notice = Some(format!("Delete failed: {e}")),
         }
         state.refresh();
     }
@@ -525,7 +661,7 @@ fn toolbar(
     stop_key: &str,
 ) {
     let relaxed = std::sync::atomic::Ordering::Relaxed;
-    ui.add_space(4.0);
+    let p = theme::palette(ui);
     match engine.shared.mode() {
         Mode::Idle => {
             // Wrapped: when the cheat sheet squeezes the middle column, the
@@ -533,8 +669,11 @@ fn toolbar(
             // would widen the Ui and push the editor under the panel).
             ui.horizontal_wrapped(|ui| {
                 if ui
-                    .button(format!("⏺ Record ({record_key})"))
-                    .on_hover_text("recording appends to the open macro")
+                    .add(theme::accent_button("⏺  Record", p.red).right_text(key_text(record_key)))
+                    .on_hover_text(
+                        "Record your mouse and keyboard. New steps are added to the \
+                         end of the open macro.",
+                    )
                     .clicked()
                 {
                     engine.send(Command::StartRecording(RecordConfig {
@@ -545,7 +684,11 @@ fn toolbar(
                 let parsed = state.parse_current();
                 let playable = matches!(&parsed, Ok(s) if s.stats().instructions > 0);
                 if ui
-                    .add_enabled(playable, egui::Button::new(format!("▶ Play ({play_key})")))
+                    .add_enabled(
+                        playable,
+                        theme::accent_button("▶  Play", p.green).right_text(key_text(play_key)),
+                    )
+                    .on_disabled_hover_text("Record or write some steps first")
                     .clicked()
                 {
                     if let Ok(script) = parsed {
@@ -571,78 +714,119 @@ fn toolbar(
                 {
                     save(state, store);
                 }
+                ui.add_space(8.0);
+                // Secondary tools: frameless until hovered or switched on.
                 if ui
-                    .button("🧹 Tidy")
+                    .add(egui::Button::new("✨ Tidy").frame_when_inactive(false))
                     .on_hover_text(
-                        "remove all mouse moves except those directly before a click \
+                        "Remove all mouse moves except those directly before a click \
                          or mousedown (reformats the script)",
                     )
                     .clicked()
                 {
                     tidy(state);
                 }
-                ui.toggle_value(&mut state.show_find, "🔍 Find");
-                ui.toggle_value(&mut state.show_cheatsheet, "📖 Cheat sheet");
+                if ui
+                    .add(egui::Button::selectable(state.show_find, "🔍 Find"))
+                    .on_hover_text("Find & replace with regular expressions")
+                    .clicked()
+                {
+                    state.show_find = !state.show_find;
+                }
+                if ui
+                    .add(egui::Button::selectable(
+                        state.show_cheatsheet,
+                        "📖 Cheat sheet",
+                    ))
+                    .on_hover_text("Every command the macro language knows")
+                    .clicked()
+                {
+                    state.show_cheatsheet = !state.show_cheatsheet;
+                }
             });
-            if state.selected.is_none() {
-                ui.horizontal(|ui| {
-                    ui.label("Name");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut state.untitled_name).desired_width(180.0),
-                    );
-                    ui.weak("(unsaved)");
-                });
-            }
         }
         Mode::Recording => {
             ui.horizontal(|ui| {
-                let events = engine.shared.events_recorded.load(relaxed);
-                ui.colored_label(
-                    ui.visuals().error_fg_color,
-                    format!("● recording — {events} events"),
-                );
-                if ui.button(format!("⏹ Stop ({record_key})")).clicked() {
+                if ui
+                    .add(
+                        theme::accent_button("⏹  Stop recording", p.red)
+                            .right_text(key_text(record_key)),
+                    )
+                    .clicked()
+                {
                     engine.request_stop();
                 }
+                let events = engine.shared.events_recorded.load(relaxed);
+                theme::status_dot(ui, p.red, format!("Recording — {events} events so far"));
             });
         }
         Mode::Playing => {
             ui.horizontal(|ui| {
-                let iteration = engine.shared.playback_iteration.load(relaxed);
-                ui.label(format!("▶ playing — {iteration} iterations done"));
-                if ui.button(format!("⏹ Stop ({stop_key})")).clicked() {
+                if ui
+                    .add(theme::accent_button("⏹  Stop", p.red).right_text(key_text(stop_key)))
+                    .clicked()
+                {
                     engine.request_stop();
                 }
+                let iteration = engine.shared.playback_iteration.load(relaxed);
+                theme::status_dot(ui, p.green, format!("Playing — round {}", iteration + 1));
             });
         }
         Mode::Clicking => {
-            ui.label("engine is busy auto-clicking — stop it first");
+            ui.weak("The auto-clicker is running — stop it first.");
         }
     }
 }
 
+/// A hotkey shown dimmed inside a filled button.
+fn key_text(key: &str) -> egui::RichText {
+    egui::RichText::new(key)
+        .size(12.0)
+        .color(egui::Color32::from_white_alpha(200))
+}
+
 fn options_row(ui: &mut egui::Ui, state: &mut MacrosUi) {
-    ui.horizontal_wrapped(|ui| {
-        ui.label("Playback:");
+    // The segmented control is one nested row that `horizontal_wrapped`
+    // can't break, so stack the two groups explicitly when space is short.
+    let narrow = ui.available_width() < 600.0;
+    let speed = |ui: &mut egui::Ui, state: &mut MacrosUi| {
+        ui.weak("Speed");
         ui.add(
             egui::Slider::new(&mut state.speed, 0.25..=4.0)
                 .logarithmic(true)
                 .suffix("×"),
         );
-        ui.checkbox(&mut state.repeat_infinite, "loop forever");
+    };
+    let repeat = |ui: &mut egui::Ui, state: &mut MacrosUi| {
+        ui.weak("Repeat");
+        theme::segmented(
+            ui,
+            &mut state.repeat_infinite,
+            &[(true, "Until stopped"), (false, "A set number")],
+        );
         if !state.repeat_infinite {
             ui.add(
                 egui::DragValue::new(&mut state.repeat_times)
                     .range(1..=1_000_000)
-                    .prefix("× "),
+                    .suffix(" times"),
             );
         }
-    });
+    };
+    if narrow {
+        ui.horizontal(|ui| speed(ui, state));
+        ui.horizontal(|ui| repeat(ui, state));
+    } else {
+        ui.horizontal(|ui| {
+            speed(ui, state);
+            ui.add_space(10.0);
+            repeat(ui, state);
+        });
+    }
 }
 
 fn save(state: &mut MacrosUi, store: Option<&MacroStore>) -> bool {
     let Some(store) = store else {
-        state.notice = Some("macro library unavailable — cannot save".into());
+        state.notice = Some("The macro library is unavailable, so nothing can be saved".into());
         return false;
     };
     let mut converted = false;
@@ -677,9 +861,9 @@ fn save(state: &mut MacrosUi, store: Option<&MacroStore>) -> bool {
     match result {
         Ok(path) => {
             state.notice = Some(if converted {
-                format!("converted to {}", path.display())
+                format!("✔ Converted to {}", path.display())
             } else {
-                format!("saved to {}", path.display())
+                format!("✔ Saved to {}", path.display())
             });
             state.selected = Some(path);
             state.dirty = false;
@@ -687,7 +871,7 @@ fn save(state: &mut MacrosUi, store: Option<&MacroStore>) -> bool {
             true
         }
         Err(e) => {
-            state.notice = Some(format!("save failed: {e}"));
+            state.notice = Some(format!("Save failed: {e}"));
             false
         }
     }
@@ -699,15 +883,15 @@ fn tidy(state: &mut MacrosUi) {
             let mut tidied = (*parsed).clone();
             let removed = script::strip_moves(&mut tidied.body);
             if removed == 0 {
-                state.notice = Some("no removable mouse moves".into());
+                state.notice = Some("Already tidy — no extra mouse moves".into());
                 return;
             }
             state.buffer = script::format(&tidied);
             state.dirty = true;
             state.find_from = 0;
-            state.notice = Some(format!("removed {removed} mouse moves"));
+            state.notice = Some(format!("✨ Removed {removed} mouse moves"));
         }
-        Err(e) => state.notice = Some(format!("fix the script first — {e}")),
+        Err(e) => state.notice = Some(format!("Fix the script first — {e}")),
     }
 }
 
@@ -753,7 +937,7 @@ fn find_bar(ui: &mut egui::Ui, state: &mut MacrosUi) {
                         state.find_from = 0;
                     }
                     state.notice = Some(format!(
-                        "replaced {count} match{}",
+                        "Replaced {count} match{}",
                         if count == 1 { "" } else { "es" }
                     ));
                 }
@@ -792,22 +976,23 @@ fn find_next(ctx: &egui::Context, state: &mut MacrosUi, re: &regex::Regex) {
 }
 
 fn status_line(ui: &mut egui::Ui, state: &mut MacrosUi) {
-    if state.buffer.trim().is_empty() {
-        ui.weak("empty — record something, or type commands (📖 shows the syntax)");
-        return;
-    }
+    let p = theme::palette(ui);
     match state.parse_current() {
         Ok(parsed) => {
             let stats = parsed.stats();
-            let dirty = if state.dirty { " · unsaved" } else { "" };
-            ui.weak(format!(
-                "✓ {} instructions · ≈{:.1} s at 1.0×{dirty}",
-                stats.instructions,
-                stats.nominal_us as f64 / 1e6,
-            ));
+            ui.horizontal(|ui| {
+                ui.weak(format!(
+                    "✔ {} steps · ≈ {:.1} s per round at 1×",
+                    stats.instructions,
+                    stats.nominal_us as f64 / 1e6,
+                ));
+                if state.dirty {
+                    ui.label(egui::RichText::new("· unsaved changes").color(p.accent_text));
+                }
+            });
         }
         Err(e) => {
-            ui.colored_label(ui.visuals().error_fg_color, format!("✖ {e}"));
+            ui.colored_label(p.error, format!("✖ {e}"));
         }
     }
 }
@@ -832,6 +1017,9 @@ fn editor(ui: &mut egui::Ui, state: &mut MacrosUi) {
                     egui::TextEdit::multiline(buffer)
                         .id(egui::Id::new(EDITOR_ID))
                         .code_editor()
+                        .hint_text(
+                            "Recorded steps show up here — or type your own, e.g.  click left",
+                        )
                         .desired_width(f32::INFINITY)
                         .desired_rows(16)
                         .layouter(&mut layouter),
@@ -853,11 +1041,19 @@ fn unsaved_dialog(ui: &mut egui::Ui, state: &mut MacrosUi, store: Option<&MacroS
     // None = keep asking; Some(true) = proceed; Some(false) = stay put.
     let mut decision: Option<bool> = None;
     let response = egui::Modal::new(egui::Id::new("unsaved-macro")).show(ui.ctx(), |ui| {
-        ui.strong("Unsaved changes");
-        ui.label("The macro in the editor has unsaved changes.");
+        let p = theme::palette(ui);
+        ui.label(
+            egui::RichText::new("Save your changes?")
+                .size(17.0)
+                .color(p.text),
+        );
+        ui.label("The macro in the editor has changes that are not saved yet.");
         ui.add_space(8.0);
         ui.horizontal(|ui| {
-            if ui.button("💾 Save first").clicked() {
+            if ui
+                .add(theme::accent_button("💾 Save first", p.green))
+                .clicked()
+            {
                 decision = Some(save(state, store));
             }
             if ui.button("Discard changes").clicked() {
@@ -913,14 +1109,7 @@ fn build_job(ui: &egui::Ui, text: &str) -> egui::text::LayoutJob {
     let normal = TextFormat::simple(font.clone(), visuals.text_color());
     let comment = TextFormat::simple(font.clone(), visuals.weak_text_color());
     let keyword = TextFormat::simple(font.clone(), visuals.hyperlink_color);
-    let string = TextFormat::simple(
-        font,
-        if visuals.dark_mode {
-            egui::Color32::from_rgb(0xa5, 0xc2, 0x61)
-        } else {
-            egui::Color32::from_rgb(0x3f, 0x76, 0x2c)
-        },
-    );
+    let string = TextFormat::simple(font, theme::palette(ui).string);
 
     let mut job = LayoutJob::default();
     if text.lines().count() > HIGHLIGHT_MAX_LINES {

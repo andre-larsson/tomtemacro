@@ -101,7 +101,7 @@ repeat 25          # whole numbers ≥ 1; blocks nest (up to 32 deep)
 end
 ```
 
-For "repeat forever", use the **loop forever** playback option instead — it
+For "repeat forever", set the playback option **Repeat → Until stopped** instead — it
 also survives the stop hotkey more predictably than a huge count.
 
 ## The metadata header
@@ -128,7 +128,7 @@ ordinary comments below it are just comments.
   marker (or starts a fresh buffer). Adjacent press/release pairs are
   collapsed into `click`/`press` lines and delays are rounded to whole
   milliseconds for readability.
-- **🧹 Tidy** removes every mouse move except the ones directly before a
+- **✨ Tidy** removes every mouse move except the ones directly before a
   `click`/`mousedown` and merges the surrounding waits, so the total
   duration is preserved. Recordings shrink by ~90 % and become actually
   readable. (Tidy reformats the script canonically.)

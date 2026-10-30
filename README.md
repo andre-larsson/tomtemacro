@@ -56,8 +56,9 @@ clicking and typing so you don't have to.
   idle — never while you're moving the mouse, recording, or playing.
 - **Global hotkeys** — start/stop everything from anywhere
   (defaults: `F6` clicker, `F7` record, `F8` play, `F9` stop all).
-- **GUI** — a small [egui](https://github.com/emilk/egui) app; the engine runs
-  on background threads so the UI never blocks.
+- **GUI** — a small [egui](https://github.com/emilk/egui) app with warm light
+  and dark themes; the engine runs on background threads so the UI never
+  blocks.
 
 ## Platform support
 

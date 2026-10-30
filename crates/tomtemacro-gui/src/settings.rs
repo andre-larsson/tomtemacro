@@ -22,6 +22,27 @@ pub struct Settings {
     /// Where macros are saved and listed; `None` = the platform default
     /// (e.g. `~/.local/share/tomtemacro/macros`).
     pub macro_dir: Option<PathBuf>,
+    pub theme: ThemeChoice,
+}
+
+/// Light by default; dark or follow-the-OS on request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ThemeChoice {
+    #[default]
+    Light,
+    Dark,
+    System,
+}
+
+impl ThemeChoice {
+    pub fn preference(self) -> eframe::egui::ThemePreference {
+        use eframe::egui::ThemePreference;
+        match self {
+            Self::Light => ThemePreference::Light,
+            Self::Dark => ThemePreference::Dark,
+            Self::System => ThemePreference::System,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -73,6 +94,7 @@ impl Default for Settings {
             anti_sleep: AntiSleepSettings::default(),
             last_open_macro: None,
             macro_dir: None,
+            theme: ThemeChoice::default(),
         }
     }
 }

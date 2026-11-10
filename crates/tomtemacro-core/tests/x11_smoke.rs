@@ -239,3 +239,45 @@ fn full_event_kinds_round_trip() {
         );
     }
 }
+
+/// The reported screen size must be the one in use. X confines the pointer to
+/// the screen, so pushing it far past the bottom-right corner reveals the
+/// real size — which only holds for a single rectangular screen, hence a
+/// disposable display. (30000 is about as far as X11 coordinates go: they
+/// are 16-bit.)
+#[test]
+#[ignore = "needs a virtual X server; set TOMTE_FULL_SMOKE=1"]
+fn main_display_is_the_screen_in_use() {
+    if std::env::var_os("TOMTE_FULL_SMOKE").is_none() {
+        eprintln!("skipping: TOMTE_FULL_SMOKE not set (needs a disposable display)");
+        return;
+    }
+
+    let _display = X_DISPLAY.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut injector = EnigoInjector::new().expect("X11 injection backend");
+    let original = injector.cursor_location().expect("read cursor");
+    let reported = injector.main_display().expect("read screen size");
+
+    injector
+        .inject(&EventKind::MouseMove {
+            x: 30_000.0,
+            y: 30_000.0,
+        })
+        .expect("inject move");
+    std::thread::sleep(Duration::from_millis(30));
+    let corner = injector.cursor_location().expect("read cursor");
+
+    // Restore before asserting so a failure doesn't strand the pointer.
+    injector
+        .inject(&EventKind::MouseMove {
+            x: f64::from(original.0),
+            y: f64::from(original.1),
+        })
+        .expect("restore cursor");
+
+    assert_eq!(
+        reported,
+        (corner.0 + 1, corner.1 + 1),
+        "screen size disagrees with where the pointer is confined"
+    );
+}

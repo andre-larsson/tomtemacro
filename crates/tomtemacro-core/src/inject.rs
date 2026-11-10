@@ -118,6 +118,20 @@ impl Injector for EnigoInjector {
             .map_err(|e| InjectError::Inject(e.to_string()))
     }
 
+    /// On X11 this asks the server directly: enigo's backend there answers
+    /// with the first mode in the RandR list rather than the one in use, so a
+    /// 1680x1050 desktop can come back as 1600x1200.
+    #[cfg(target_os = "linux")]
+    fn main_display(&mut self) -> Result<(i32, i32), InjectError> {
+        let unavailable = || InjectError::Inject("display size unavailable".into());
+        let (width, height) = rdev::display_size().map_err(|_| unavailable())?;
+        Ok((
+            i32::try_from(width).map_err(|_| unavailable())?,
+            i32::try_from(height).map_err(|_| unavailable())?,
+        ))
+    }
+
+    #[cfg(not(target_os = "linux"))]
     fn main_display(&mut self) -> Result<(i32, i32), InjectError> {
         self.enigo
             .main_display()

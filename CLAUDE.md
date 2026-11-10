@@ -44,6 +44,10 @@ git tag v0.X.Y && git push origin v0.X.Y
 
 The workflow builds Linux (ubuntu-22.04 for a glibc 2.35 baseline), Windows, and a macOS universal binary, then publishes the GitHub release atomically once all three assets exist. Asset names are deliberately **versionless** (`tomte-linux-x86_64.tar.gz`, …) because external sites link to `releases/latest/download/<asset>` — never rename them.
 
+## Website
+
+`site/` is the landing page, served at https://a403.space/tomtemacro/. It is plain HTML and CSS with no build step; `.github/workflows/pages.yml` publishes the folder as it stands whenever something under `site/` changes on main. Its colours mirror `crates/tomtemacro-gui/src/theme.rs` and its download buttons use the versionless release asset names, so keep both in step. The screenshots in `site/img/` are 2x captures of the real app (Macros tab with the cheat sheet open, and crops of the Auto-clicker and Settings tabs), each in the light and dark theme.
+
 ## Architecture
 
 Two-crate workspace:

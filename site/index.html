@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TomteMacro: auto-clicker and macro recorder</title>
+    <meta
+      name="description"
+      content="A free, open-source auto-clicker and mouse and keyboard macro recorder for Linux, Windows and macOS."
+    />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#fbf7ef" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#1f1c19" media="(prefers-color-scheme: dark)" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="TomteMacro: the little gnome that clicks for you" />
+    <meta
+      property="og:description"
+      content="A free, open-source auto-clicker and mouse and keyboard macro recorder for Linux, Windows and macOS."
+    />
+    <meta property="og:url" content="https://a403.space/tomtemacro/" />
+    <meta property="og:image" content="https://a403.space/tomtemacro/img/macros-light.png" />
+    <link rel="icon" type="image/svg+xml" href="icon.svg" />
+    <link rel="apple-touch-icon" href="icon-256.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&display=swap"
+    />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="site-header wrap">
+      <a class="brand" href="#top">
+        <img src="icon.svg" width="36" height="36" alt="" />
+        TomteMacro
+      </a>
+      <nav aria-label="On this page">
+        <a class="nav-features" href="#features">Features</a>
+        <a href="#download">Download</a>
+        <a href="https://github.com/andre-larsson/tomtemacro">Source</a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero wrap">
+        <p class="eyebrow">Auto-clicker and macro recorder</p>
+        <h1>The little gnome that clicks for you.</h1>
+        <p class="lead">
+          Like the tomte of Scandinavian folklore, the household gnome that quietly does your
+          chores while you sleep, TomteMacro takes over the repetitive clicking and typing so you
+          don't have to.
+        </p>
+
+        <!-- All three are plain links; the script at the end of the page
+             promotes the one for the visitor's system. -->
+        <div class="downloads">
+          <a
+            class="button"
+            data-os="linux"
+            href="https://github.com/andre-larsson/tomtemacro/releases/latest/download/tomte-linux-x86_64.tar.gz"
+            >Download for Linux</a
+          >
+          <a
+            class="button"
+            data-os="windows"
+            href="https://github.com/andre-larsson/tomtemacro/releases/latest/download/tomte-windows-x86_64.zip"
+            >Download for Windows</a
+          >
+          <a
+            class="button"
+            data-os="macos"
+            href="https://github.com/andre-larsson/tomtemacro/releases/latest/download/tomte-macos-universal.tar.gz"
+            >Download for macOS</a
+          >
+        </div>
+        <p class="fine">
+          Free and open source.
+          <a href="https://github.com/andre-larsson/tomtemacro/releases/latest" id="release"
+            >Latest release</a
+          >.
+          <a href="#download">Install notes</a>
+        </p>
+
+        <a class="shot shot-hero" href="img/macros-light.png">
+          <picture>
+            <source srcset="img/macros-dark.png" media="(prefers-color-scheme: dark)" />
+            <img
+              src="img/macros-light.png"
+              width="840"
+              height="580"
+              alt="TomteMacro's Macros tab: a list of saved macros, a script open in the editor, and the cheat sheet of commands beside it."
+            />
+          </picture>
+        </a>
+      </section>
+
+      <section class="features wrap" id="features">
+        <article class="feature">
+          <div class="feature-copy">
+            <h2>Auto-clicker</h2>
+            <p>
+              Click, or press a key, at a set interval with millisecond precision. It runs until
+              you stop it, or for a set number of clicks.
+            </p>
+            <ul>
+              <li>Any mouse button or keyboard key, once or twice per interval</li>
+              <li>Wherever the cursor is, or at one fixed spot</li>
+              <li>Optional humanize: small variations in timing and position</li>
+            </ul>
+          </div>
+          <a class="shot feature-media" href="img/clicker-light.png">
+            <picture>
+              <source srcset="img/clicker-dark.png" media="(prefers-color-scheme: dark)" />
+              <img
+                src="img/clicker-light.png"
+                width="600"
+                height="352"
+                loading="lazy"
+                alt="The auto-clicker settings: what to press, how often, where, until when, and a Start clicking button."
+              />
+            </picture>
+          </a>
+        </article>
+
+        <article class="feature">
+          <div class="feature-copy">
+            <h2>Record, replay, refine</h2>
+            <p>
+              Record your mouse and keyboard with their original timing, then replay the result at
+              any speed, a set number of times or until you stop it.
+            </p>
+            <p>
+              A recording is a plain-text script, saved as a <code>.tomte</code> file you can
+              rename, edit and share. The built-in editor has regex find and replace, a cheat
+              sheet of every command, and a one-click tidy that strips recorded mouse noise.
+            </p>
+            <p>
+              <a href="https://github.com/andre-larsson/tomtemacro/blob/main/docs/macro-language.md"
+                >Macro language reference</a
+              >
+            </p>
+          </div>
+          <figure class="feature-media script">
+            <figcaption>farm-loop.tomte</figcaption>
+            <pre><code><span class="c"># tomte-macro v1</span>
+<span class="c"># name: farm loop</span>
+
+<span class="k">move</span> 812 344
+<span class="k">click</span> left
+<span class="k">wait</span> 250ms..400ms      <span class="c"># a little natural variation</span>
+<span class="k">repeat</span> 10
+  <span class="k">press</span> e
+  <span class="k">wait</span> 1.5s
+<span class="k">end</span>
+<span class="k">type</span> <span class="s">"done!"</span></code></pre>
+          </figure>
+        </article>
+
+        <article class="feature">
+          <div class="feature-copy">
+            <h2>Hotkeys that work from any app</h2>
+            <p>
+              Start and stop without switching windows. By default <kbd>F6</kbd> toggles the
+              clicker, <kbd>F7</kbd> records, <kbd>F8</kbd> plays the open macro and
+              <kbd>F9</kbd> stops everything. Each can be rebound to another function key.
+            </p>
+            <p>
+              An optional keep-awake nudges the mouse one pixel and straight back after a set idle
+              time, so the computer never sleeps. It only fires when you are idle, never while you
+              are moving the mouse, recording or playing.
+            </p>
+            <p>Light and dark themes are included, or it can follow your system.</p>
+          </div>
+          <a class="shot feature-media" href="img/settings-light.png">
+            <picture>
+              <source srcset="img/settings-dark.png" media="(prefers-color-scheme: dark)" />
+              <img
+                src="img/settings-light.png"
+                width="640"
+                height="325"
+                loading="lazy"
+                alt="The Settings tab: a theme choice and the four global hotkeys, set to F6 through F9."
+              />
+            </picture>
+          </a>
+        </article>
+      </section>
+
+      <section class="install wrap" id="download">
+        <h2>Download and install</h2>
+        <p class="section-lead">
+          Prebuilt binaries for the latest release. They are unsigned, so expect a one-time
+          warning on first launch. If you would rather not trust a prebuilt binary, you can
+          <a href="https://github.com/andre-larsson/tomtemacro#building-from-source"
+            >build from source</a
+          >.
+        </p>
+
+        <div class="platforms">
+          <article class="platform" data-os="linux">
+            <h3>Linux <span class="platform-arch">x86_64, X11</span></h3>
+            <a
+              class="button"
+              href="https://github.com/andre-larsson/tomtemacro/releases/latest/download/tomte-linux-x86_64.tar.gz"
+              >tomte-linux-x86_64.tar.gz</a
+            >
+            <pre><code>tar -xzf tomte-linux-x86_64.tar.gz
+./tomte</code></pre>
+            <p>
+              Needs an X11 session and the <code>libx11</code>, <code>libxtst</code> and
+              <code>libxi</code> libraries. Wayland is not supported yet: it blocks global input
+              capture and injection by design.
+            </p>
+            <p>
+              The tarball also ships a <code>.desktop</code> file and icon.
+              <a href="https://github.com/andre-larsson/tomtemacro#linux"
+                >Add it to your app launcher</a
+              >.
+            </p>
+          </article>
+
+          <article class="platform" data-os="windows">
+            <h3>Windows <span class="platform-arch">x86_64</span></h3>
+            <a
+              class="button"
+              href="https://github.com/andre-larsson/tomtemacro/releases/latest/download/tomte-windows-x86_64.zip"
+              >tomte-windows-x86_64.zip</a
+            >
+            <p>
+              Unzip and run <code>tomte.exe</code>. SmartScreen will object the first time: choose
+              <strong>More info</strong>, then <strong>Run anyway</strong>.
+            </p>
+            <p>
+              It can't control elevated (admin) windows unless TomteMacro itself runs elevated.
+            </p>
+          </article>
+
+          <article class="platform" data-os="macos">
+            <h3>macOS <span class="platform-arch">Apple Silicon and Intel</span></h3>
+            <a
+              class="button"
+              href="https://github.com/andre-larsson/tomtemacro/releases/latest/download/tomte-macos-universal.tar.gz"
+              >tomte-macos-universal.tar.gz</a
+            >
+            <p>
+              The tarball contains <code>TomteMacro.app</code>. Drag it into Applications, then
+              right-click it and choose <strong>Open</strong> the first time, or clear the
+              quarantine flag:
+            </p>
+            <pre><code>xattr -dr com.apple.quarantine /Applications/TomteMacro.app</code></pre>
+            <p>
+              On first launch it walks you through granting the Accessibility permission it needs
+              for recording and playback.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="fair-use wrap">
+        <h2>A note on games and fair use</h2>
+        <p>
+          TomteMacro synthesizes input through the ordinary OS APIs (SendInput, CGEvent, XTest).
+          It makes no attempt to hide itself. Anti-cheat systems detect synthetic input by design,
+          and using macros may violate a game's terms of service. Evasion features are explicitly
+          out of scope for this project.
+        </p>
+        <p>
+          Unsigned auto-clickers are also common antivirus false-positive targets. Building from
+          source is the transparent way around that.
+        </p>
+      </section>
+    </main>
+
+    <footer class="site-footer wrap">
+      <p>TomteMacro is licensed under MIT or Apache-2.0.</p>
+      <nav aria-label="More">
+        <a href="https://github.com/andre-larsson/tomtemacro">Source on GitHub</a>
+        <a href="https://github.com/andre-larsson/tomtemacro/releases">All releases</a>
+        <a href="https://a403.space/">More projects at a403.space</a>
+      </nav>
+    </footer>
+
+    <script>
+      // Promote the download for the visitor's system. Phones and tablets get
+      // no highlight: there is nothing for them to run.
+      const agent = navigator.userAgent
+      const platform = navigator.userAgentData?.platform || navigator.platform || agent
+      const os = /android|iphone|ipad|ipod/i.test(agent)
+        ? null
+        : /win/i.test(platform)
+          ? 'windows'
+          : /mac/i.test(platform)
+            ? 'macos'
+            : /linux|x11/i.test(platform)
+              ? 'linux'
+              : null
+      if (os) {
+        document.querySelectorAll(`[data-os="${os}"]`).forEach((el) => el.classList.add('is-yours'))
+      }
+
+      // Screenshots open at full size; follow whichever theme variant is showing.
+      document.querySelectorAll('a.shot').forEach((link) => {
+        link.addEventListener('click', () => {
+          link.href = link.querySelector('img').currentSrc || link.href
+        })
+      })
+
+      // Name the latest release. If GitHub can't be reached the link simply
+      // keeps its plain label.
+      fetch('https://api.github.com/repos/andre-larsson/tomtemacro/releases/latest')
+        .then((response) => (response.ok ? response.json() : null))
+        .then((release) => {
+          if (!release?.tag_name) return
+          const date = new Date(release.published_at).toLocaleDateString(undefined, {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+          })
+          document.getElementById('release').textContent = `Latest release ${release.tag_name}, ${date}`
+        })
+        .catch(() => {})
+    </script>
+  </body>
+</html>

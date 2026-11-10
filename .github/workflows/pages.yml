@@ -1,0 +1,39 @@
+name: Deploy website to GitHub Pages
+
+# The landing page (https://a403.space/tomtemacro/) is the static site/
+# folder as it stands: there is no build step. Code-only pushes don't
+# redeploy it.
+on:
+  push:
+    branches: ["main"]
+    paths: ["site/**", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.1
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v4.0.0
+        with:
+          path: site
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5.0.0

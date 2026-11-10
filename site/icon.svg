@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- TomteMacro app icon master. Flat shapes only: must stay legible at 16 px
+       and crisp at 1024 px. Edit this file and re-run build-icons.sh; never
+       edit the exported PNGs/ico. -->
+  <rect width="1024" height="1024" rx="230" fill="#F5EEDC"/>
+  <!-- body mound -->
+  <path d="M 240 872 C 240 700 336 612 458 612 C 580 612 676 700 676 872 Z" fill="#41603C"/>
+  <!-- hat: swoosh tapering into the tip knob circle -->
+  <path d="M 236 540
+           C 262 372 390 178 556 156
+           C 664 140 744 200 757 288
+           C 706 318 648 296 602 246
+           C 642 330 672 434 686 540
+           C 542 576 386 576 236 540 Z" fill="#D2382C"/>
+  <circle cx="764" cy="300" r="48" fill="#D2382C"/>
+  <!-- cursor -->
+  <path d="M 584 492 L 584 872 L 688 780 L 745 929 L 796 908 L 740 763 L 872 763 Z"
+        fill="#2F3B45" stroke="#F5EEDC" stroke-width="22" stroke-linejoin="round"
+        paint-order="stroke"/>
+</svg>
